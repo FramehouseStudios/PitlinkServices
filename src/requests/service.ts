@@ -32,7 +32,9 @@ export class RequestService {
   constructor(
     private readonly evidence: EvidenceStore,
     private readonly requests: RequestStore,
-    private readonly serviceTypes: readonly string[]
+    private readonly serviceTypes: readonly string[],
+    /** Notified after each NEW spine event (replays excluded) — realtime push. */
+    private readonly onEvent?: (event: EvidenceEvent) => void
   ) {}
 
   async create(
@@ -74,6 +76,7 @@ export class RequestService {
     // request, healing the projection from the event if the row is missing.
     const canonicalId = event.requestId;
     if (canonicalId !== requestId) return this.heal(canonicalId, event, actor.id);
+    this.onEvent?.(event);
 
     const record: RequestRecord = {
       id: requestId,
@@ -105,7 +108,7 @@ export class RequestService {
     const deny = async (reason: "illegal_transition" | "wrong_actor_population") => {
       // Hard rule 10: privileged-write denials are audited — on the spine,
       // request-scoped, before the error surfaces.
-      await this.evidence.append({
+      const denial = await this.evidence.append({
         requestId,
         eventType: "request.transition_denied",
         payload: { from, to, reason },
@@ -115,6 +118,7 @@ export class RequestService {
         idempotencyKey: `request.denied:${randomUUID()}`,
         occurredAt: now,
       });
+      this.onEvent?.(denial);
       throw new IllegalTransitionError(from, to, reason);
     };
 
@@ -140,6 +144,7 @@ export class RequestService {
       // Replay of an earlier successful transition under the same key.
       return (await this.requests.findById(requestId))!;
     }
+    this.onEvent?.(event);
 
     const updated = await this.requests.setStatus(requestId, from, to, now);
     if (!updated) {

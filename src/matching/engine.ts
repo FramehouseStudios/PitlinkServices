@@ -8,9 +8,13 @@ import { CALCULATION_RULES_VERSION } from "../common/evidence/rules.js";
 import type { RequestService } from "../requests/service.js";
 import type { MatchOutcome, ProviderDirectory } from "./types.js";
 
+import type { EvidenceEvent } from "../common/evidence/types.js";
+
 export interface MatchingEngineOptions {
   /** From config ENABLE_PROVIDER_MARKETPLACE — never hard-coded. */
   marketplaceEnabled: boolean;
+  /** Notified after each new spine event — realtime push. */
+  onEvent?: (event: EvidenceEvent) => void;
 }
 
 export class MatchingEngine {
@@ -39,7 +43,7 @@ export class MatchingEngine {
     if (candidates.length === 0) {
       // Match failure is metric-affecting (density risk is THE business
       // risk) — it must be measurable, so it goes on the spine.
-      await this.evidence.append({
+      const failed = await this.evidence.append({
         requestId,
         eventType: "request.match_failed",
         payload: { serviceType: request.serviceType, city: request.city, reason: "no_providers" },
@@ -49,6 +53,7 @@ export class MatchingEngine {
         idempotencyKey: `match.failed:${requestId}:${attemptKey}`,
         occurredAt: now,
       });
+      this.options.onEvent?.(failed);
       return { matched: false, reason: "no_providers" };
     }
 
@@ -57,7 +62,7 @@ export class MatchingEngine {
       .sort((a, b) => a.distanceKm - b.distanceKm);
     const best = ranked[0]!;
 
-    await this.evidence.append({
+    const offered = await this.evidence.append({
       requestId,
       eventType: "provider.offered",
       payload: { providerId: best.provider.id, distanceKm: best.distanceKm },
@@ -67,9 +72,10 @@ export class MatchingEngine {
       idempotencyKey: `match.offered:${requestId}:${attemptKey}`,
       occurredAt: now,
     });
+    this.options.onEvent?.(offered);
     // Phase 0 mock: auto-accept. Phase 1 replaces this with the provider's
     // real response behind the same event.
-    await this.evidence.append({
+    const accepted = await this.evidence.append({
       requestId,
       eventType: "provider.accepted",
       payload: { providerId: best.provider.id },
@@ -79,6 +85,7 @@ export class MatchingEngine {
       idempotencyKey: `match.accepted:${requestId}:${attemptKey}`,
       occurredAt: now,
     });
+    this.options.onEvent?.(accepted);
     await this.requests.transition(
       { type: "system", id: "matching-engine" },
       requestId,

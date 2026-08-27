@@ -1,7 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 5 complete + Phase 0 exit criterion
-passing as an executable test; pushed to
+Last updated: 2026-08-26 (Increment 6 complete; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -18,9 +17,9 @@ reproducible timeline.
 | 2 | Auth + member/provider principals | DONE |
 | 3 | Request create + append-only events | DONE |
 | 4 | Basic AI agent tool-calling loop | DONE |
-| 5 | Matching interface (mock providers) | **DONE** (this hand-off) |
-| 6 | Redis presence + WS status | **NEXT** |
-| 7 | Stripe membership/incident skeleton | pending |
+| 5 | Matching interface (mock providers) | DONE |
+| 6 | Redis presence + WS status | **DONE** (this hand-off) |
+| 7 | Stripe membership/incident skeleton | **NEXT** |
 | 8–12 | Live provider adapter, tracking/ETA, reconciliation, observability, first paid path | pending |
 
 ## Decisions made (do not re-litigate)
@@ -130,6 +129,29 @@ reproducible timeline.
   developer directive + CEO-level autonomy (stop only for binding/capital/
   legal matters).
 
+### Increment 6 decisions (realtime)
+
+- `ProviderPresence` (`src/realtime/presence.ts`): heartbeat + TTL is THE
+  availability model — a silent provider ages out of supply automatically
+  (no stale flags). Redis impl uses SET EX + a per-city SET index with
+  opportunistic stale cleanup; in-memory impl mirrors semantics via an
+  injectable clock. `PresenceProviderDirectory` slots into the SAME
+  `ProviderDirectory` interface — the matching engine needed zero changes to
+  go from mock to live supply (tested: offline → match_failed, heartbeat →
+  matched).
+- Realtime push: `RequestEventBus` is an in-process pub/sub — deliberately
+  NOT a broker (Blueprint §13). `RequestService` and `MatchingEngine` accept
+  an optional `onEvent` hook fired only for NEW spine events (replays and
+  the spine itself stay authoritative). WS surface (`src/realtime/ws.ts`,
+  path `/ws?token=&requestId=`): auth + ownership checked before any
+  subscription; close 4401 unauthorized / 4404 not-found (existence not
+  leaked); snapshot (request + full timeline) then live events.
+- `redis` and `ws` added as runtime deps — infrastructure drivers, not
+  vendor SDKs; Contract Gate intact. vitest upgraded 2→3: npm audit now
+  ZERO vulnerabilities (previous 5 were all dev-chain esbuild/vite).
+- Entrypoint (`src/index.ts`) now boots API + WS + Redis presence together;
+  boot-verified against the live stack.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -157,14 +179,16 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 6)
+## Next active task (Increment 7)
 
-Redis presence + WS status: an owned presence interface (`src/realtime/`)
-backed by Redis (REDIS_URL from config) tracking provider availability and
-location heartbeats — which then replaces `MockProviderDirectory`'s static
-`available` flag as the live supply source behind the same
-`ProviderDirectory` interface — plus a WebSocket status surface so a member
-can watch their request move through the lifecycle in real time (subscribe
-by request id, member-scoped auth, events sourced from the spine). Keep the
-in-memory fallback for tests. After this: increment 7 (Stripe skeleton
-behind an owned payments adapter).
+Stripe membership/incident skeleton behind an owned payments adapter
+(`src/payments/`): a `PaymentsAdapter` interface (create customer, attach
+membership subscription, charge per-incident, webhook ingestion) with a
+deterministic fake implementation for Phase 0 — NO Stripe SDK until keys and
+commercial terms exist (pricing/packaging is an open RFI, so amounts are
+parameters, never constants). Webhook ingestion must follow hard rule 4:
+idempotency key + dead-letter + replay. Payment lifecycle events go on the
+spine (`payment.intent_created`, `payment.succeeded`, `payment.failed`) so
+cost-per-incident is derivable later. Wire nothing customer-facing yet —
+this is the evidence-and-interface skeleton the first paid path (increment
+12) will stand on.

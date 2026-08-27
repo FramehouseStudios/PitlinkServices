@@ -10,7 +10,7 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–5 complete, 6 next. The
+- **Status:** Phase 0 — Foundation. Increments 1–6 complete, 7 next. The
   Phase 0 exit criterion passes as an executable test
   (`src/phase0.exit.test.ts`).
 
@@ -229,3 +229,9 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   request→arrival purely from stored events. 52/52 tests. Founder mandates
   recorded (intelligence business developer; CEO-level autonomy — stop only
   for binding/capital/legal).
+- **2026-08-26** — Increment 6 shipped: provider presence with TTL heartbeats
+  (Redis live impl + in-memory mirror) feeding the matching engine behind the
+  unchanged ProviderDirectory interface; in-process RequestEventBus; member-
+  scoped WebSocket status surface (auth+ownership before subscribe, snapshot
+  then live events). vitest 2→3: npm audit at zero vulnerabilities. 60/60
+  tests incl. live Postgres + live Redis; entrypoint boot-verified.
