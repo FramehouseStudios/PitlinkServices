@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-27 (Provider web surface + self-standing; fixed a real
-double-booking bug; full job driven through the UI in a browser; pushed to
+Last updated: 2026-08-27 (PRODUCTION READY: container built and run,
+hardened config, graceful shutdown, docs/DEPLOY.md; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -32,7 +32,8 @@ reproducible timeline.
 | — | Member web surface (backlog 4) | DONE |
 | — | **Service reliability layer** (Blueprint §9 controls) | DONE |
 | — | **Provider quality gating** | DONE |
-| — | **Provider web surface + self-standing** | **DONE** (this hand-off) |
+| — | **Provider web surface + self-standing** | DONE |
+| — | **Production readiness** (container, hardening, shutdown) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -411,6 +412,40 @@ named reasons.
   these are historical counts, not live state, and refreshing per poll would
   scan every recent timeline.
 
+### Production readiness (2026-08-27)
+
+CEO call: make the app deployable ANYWHERE without spending founder money.
+Host selection and payment stay a founder decision; every engineering
+blocker is now removed.
+
+- **`Dockerfile`** — multi-stage, `node:22-alpine`, non-root (`USER node`),
+  production-only deps, own `HEALTHCHECK` hitting `/health`. **Built and
+  actually run** — see the bug below.
+- **Config hardening** (`src/common/config.ts`): `NODE_ENV=production`
+  refuses to start on a weak `JWT_SECRET` (<32 chars, known placeholder, or
+  no entropy) and the error names the fix (`openssl rand -base64 48`).
+  Development stays permissive. A guessable signing secret is total account
+  compromise across all three populations — worth failing a deploy over.
+  Verified: the container refuses to boot with `JWT_SECRET=change-me`.
+- **Graceful shutdown**: SIGTERM/SIGINT stops the reliability sweep, drains
+  in-flight requests, closes Redis + PostgreSQL, exits (15s hard cap).
+  Verified in the container: "shutting down" → "shutdown complete".
+- **REAL DEPLOY BUG FOUND BY ACTUALLY RUNNING THE CONTAINER:** static file
+  paths were resolved from `import.meta.url`, but compiled output lives at
+  `dist/src/index.js` — one level deeper than `src/index.ts` — so both web
+  apps 500'd in the image while every test passed. Now resolved from
+  `process.cwd()` (override with `PUBLIC_DIR`). Lesson: a Dockerfile that
+  has never been run is a guess.
+- **`docs/DEPLOY.md`**: required env, deploy steps (migrate → run → seed
+  ops), health/SIGTERM behavior, three candidate hosts [RECOMMENDATION, not
+  purchased: Fly.io / Render / AWS], the multi-instance trigger, and a blunt
+  note that `evidence_events` needs PITR backups before the first paying
+  member — it is the only record that can prove anything about the business.
+- Verified in the running production container: `/health` 200 with both
+  dependencies ok, both web apps 200, member signup + request created,
+  auto-triage ran, and `match_failed` recorded correctly (no providers
+  online) — the full stack works from an image.
+
 ## THE UNGATED BUILD IS COMPLETE
 
 Everything buildable without founder decisions now exists and is verified:
@@ -460,7 +495,10 @@ order:
 1. Proactive member communication: push ETA and recovery events into a
    channel the member sees when the page is closed — NEEDS the voice/SMS
    provider RFI. In-page is done.
-2. Deploy target selection + JWT secret strength check. Ungated.
+2. **Founder decision, low effort, high unlock:** pick a host from
+   `docs/DEPLOY.md` and provision Postgres + Redis. Engineering is done;
+   this is a card-on-file choice. A real URL unlocks recruiting the first
+   LA providers.
 3. Multi-instance readiness: the reliability sweep and event bus are
    in-process; a second instance needs leader election or a worker split
-   (measured trigger, not yet).
+   (measured trigger, not yet — see DEPLOY.md).

@@ -2,7 +2,7 @@
 // HTTP surface, and the WebSocket status stream.
 // Run the local stack first: docker compose up -d && npm run migrate
 import pg from "pg";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { loadConfig } from "./common/config.js";
 import { InMemoryAuthAuditSink } from "./common/auth/guard.js";
 import { PostgresPrincipalStore } from "./common/auth/principalStore.js";
@@ -22,6 +22,7 @@ import { DEFAULT_POLICY, ReliabilityService } from "./reliability/service.js";
 import { DEFAULT_REPUTATION_POLICY, ReputationService } from "./reliability/reputation.js";
 
 const config = loadConfig(process.env);
+const publicDir = process.env.PUBLIC_DIR ?? resolve(process.cwd(), "public");
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 const evidence = new PostgresEvidenceStore(pool);
 const bus = new RequestEventBus();
@@ -112,8 +113,11 @@ const api = createApi({
   jwtExpiry: config.jwtExpiry,
   defaultCity: config.defaultCity,
   serviceTypes: config.serviceTypes,
-  webAppPath: fileURLToPath(new URL("../public/index.html", import.meta.url)),
-  providerAppPath: fileURLToPath(new URL("../public/provider.html", import.meta.url)),
+  // Resolved from the working directory, so the same code works whether run
+  // as src/index.ts (dev) or dist/src/index.js (container) — the compiled
+  // output sits a directory deeper and import.meta-relative paths broke.
+  webAppPath: resolve(publicDir, "index.html"),
+  providerAppPath: resolve(publicDir, "provider.html"),
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
   ops: new PostgresPrincipalStore(pool, "ops"),
@@ -139,5 +143,32 @@ attachWs(api, { jwtSecret: config.jwtSecret, requests, bus, audit });
 
 const port = Number(process.env.PORT ?? 3000);
 api.listen(port, () => {
-  logger.info("listening", { port, city: config.defaultCity });
+  logger.info("listening", { port, city: config.defaultCity, env: config.environment });
 });
+
+// Graceful shutdown: a deploy must never drop a member mid-request or a
+// provider mid-transition. Stop accepting, drain, then release resources.
+let shuttingDown = false;
+const shutdown = async (signal: string): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info("shutting down", { signal });
+  clearInterval(sweepTimer);
+  const forced = setTimeout(() => {
+    logger.error("shutdown timed out; exiting");
+    process.exit(1);
+  }, 15_000);
+  forced.unref();
+  try {
+    await new Promise<void>((resolve) => api.close(() => resolve()));
+    await presence.close();
+    await pool.end();
+    logger.info("shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    logger.error("shutdown failed", { detail: (err as Error).message });
+    process.exit(1);
+  }
+};
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

@@ -270,6 +270,12 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-27** — PRODUCTION READY: Dockerfile (non-root, healthcheck)
+  built and run for real; production refuses to start on a weak JWT_SECRET;
+  graceful SIGTERM shutdown; docs/DEPLOY.md with three candidate hosts
+  (none purchased — founder decision). Real deploy bug caught by running the
+  image: static paths broke under compiled output; now cwd-resolved.
+  113/113 tests.
 - **2026-08-27** — Provider web surface shipped (one file, served at
   /provider): go online, work the assigned job, and see your own standing
   including suppression reasons verbatim (fairness: no hidden scores).

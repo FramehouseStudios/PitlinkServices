@@ -16,7 +16,10 @@ export const DEFAULT_SERVICE_TYPES = [
   "mobile_battery",
 ] as const;
 
+export type Environment = "development" | "production";
+
 export interface AppConfig {
+  environment: Environment;
   databaseUrl: string;
   redisUrl: string;
   jwtSecret: string;
@@ -44,6 +47,40 @@ export class ConfigError extends Error {
 
 const REQUIRED = ["DATABASE_URL", "REDIS_URL", "JWT_SECRET", "JWT_EXPIRY", "DEFAULT_CITY"] as const;
 
+/** Placeholders that must never reach production, whatever their length. */
+const FORBIDDEN_SECRETS = ["change-me", "changeme", "secret", "test-secret", "local", "password"];
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
+export class InsecureConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InsecureConfigError";
+  }
+}
+
+/**
+ * Production refuses to start on a weak signing secret. A guessable JWT
+ * secret is total account compromise across every population — this is the
+ * one check worth failing a deploy over.
+ */
+function assertProductionSafe(config: AppConfig): void {
+  if (config.environment !== "production") return;
+  const secret = config.jwtSecret;
+  if (secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+    throw new InsecureConfigError(
+      `JWT_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters in production (got ${secret.length}). Generate one with: openssl rand -base64 48`
+    );
+  }
+  if (FORBIDDEN_SECRETS.some((bad) => secret.toLowerCase().includes(bad))) {
+    throw new InsecureConfigError(
+      "JWT_SECRET looks like a placeholder. Generate a real one with: openssl rand -base64 48"
+    );
+  }
+  if (/^(.)\1*$/.test(secret)) {
+    throw new InsecureConfigError("JWT_SECRET has no entropy (single repeated character).");
+  }
+}
+
 function parseBool(value: string | undefined, name: string): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
@@ -54,7 +91,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const missing = REQUIRED.filter((key) => !env[key]);
   if (missing.length > 0) throw new ConfigError([...missing]);
 
-  return {
+  const environment: Environment = env.NODE_ENV === "production" ? "production" : "development";
+  const config: AppConfig = {
+    environment,
     databaseUrl: env.DATABASE_URL!,
     redisUrl: env.REDIS_URL!,
     jwtSecret: env.JWT_SECRET!,
@@ -77,4 +116,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       ...(env.STRIPE_WEBHOOK_SECRET ? { stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET } : {}),
     },
   };
+  assertProductionSafe(config);
+  return config;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadConfig } from "./config.js";
+import { ConfigError, InsecureConfigError, loadConfig } from "./config.js";
 
 const VALID_ENV = {
   DATABASE_URL: "postgres://pitlink:pitlink@localhost:5432/pitlink",
@@ -28,5 +28,35 @@ describe("config", () => {
   it("failure mode: rejects ambiguous feature-flag values", () => {
     expect(() => loadConfig({ ...VALID_ENV, ENABLE_PROVIDER_MARKETPLACE: "yes" })).toThrow(ConfigError);
     expect(() => loadConfig({ ...VALID_ENV, ENABLE_PREDICTIVE_ALERTS: undefined })).toThrow(ConfigError);
+  });
+});
+
+describe("production hardening", () => {
+  const strong = "Kq7Zx2Pm9Lw4Rt6Yv8Bn3Cd5Fg1Hj0Ak2Ms4Nq6Pr8Tv";
+  const prod = { ...VALID_ENV, NODE_ENV: "production", JWT_SECRET: strong };
+
+  it("starts in production with a strong secret", () => {
+    const config = loadConfig(prod);
+    expect(config.environment).toBe("production");
+  });
+
+  it("development is permissive — a weak local secret is fine", () => {
+    expect(loadConfig({ ...VALID_ENV, JWT_SECRET: "local" }).environment).toBe("development");
+  });
+
+  it("SECURITY: production refuses to start on a weak or placeholder JWT secret", () => {
+    // Too short.
+    expect(() => loadConfig({ ...prod, JWT_SECRET: "short-secret" })).toThrow(InsecureConfigError);
+    // Long enough but a known placeholder.
+    expect(() => loadConfig({ ...prod, JWT_SECRET: "change-me-change-me-change-me-change-me" })).toThrow(
+      /placeholder/
+    );
+    expect(() => loadConfig({ ...prod, JWT_SECRET: "correct-horse-battery-password-stapler" })).toThrow(
+      /placeholder/
+    );
+    // No entropy.
+    expect(() => loadConfig({ ...prod, JWT_SECRET: "a".repeat(48) })).toThrow(/entropy/);
+    // The error tells the operator exactly how to fix it.
+    expect(() => loadConfig({ ...prod, JWT_SECRET: "short" })).toThrow(/openssl rand/);
   });
 });
