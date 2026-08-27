@@ -113,6 +113,16 @@ describe("request lifecycle", () => {
     ]);
   });
 
+  it("regression: the same client key on two different requests does not collide", async () => {
+    const { service } = setup();
+    const a = await service.create(MEMBER, INPUT, "c-a");
+    const b = await service.create(MEMBER, INPUT, "c-b");
+    await service.transition(MEMBER, a.id, "cancelled", "shared-key");
+    const cancelled = await service.transition(MEMBER, b.id, "cancelled", "shared-key");
+    expect(cancelled.status).toBe("cancelled");
+    expect((await service.get(b.id))?.status).toBe("cancelled");
+  });
+
   it("failure mode: terminal states accept nothing", async () => {
     const { service } = setup();
     const request = await service.create(MEMBER, INPUT, "c1");

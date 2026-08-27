@@ -10,7 +10,7 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–3 complete, 4 next.
+- **Status:** Phase 0 — Foundation. Increments 1–4 complete, 5 next.
 
 ---
 
@@ -162,9 +162,11 @@ surfaces. Full rationale in the Technical Architecture Blueprint.
 ## 6. Current State (sync with `docs/HANDOFF.md` — that file is the detail)
 
 - Phase 0. Delivery Plan increments 1 (skeleton/config/evidence spine),
-  2 (auth + isolated principals), and 3 (request lifecycle + member REST API)
-  are DONE, tested (38/38 incl. live Postgres integration + live HTTP smoke),
-  and pushed to `main`. `npm run dev` serves the member journey.
+  2 (auth + isolated principals), 3 (request lifecycle + member REST API),
+  and 4 (AI agent tool-calling loop behind an owned LlmAdapter; no vendor
+  implementation until the routing RFI closes) are DONE, tested (45/45 incl.
+  live Postgres integration), and pushed to `main`. `npm run dev` serves the
+  member journey.
 - Local stack: `docker compose up -d` (Postgres 16 + Redis 7), `npm run
   migrate`, `npm test`; integration tests auto-skip without `DATABASE_URL`.
 - Decisions already made (do not re-litigate): runtime Node+TS `[DECIDED]`;
@@ -211,3 +213,9 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   catalog, owned node:http member API (signup/login/create/get/timeline/
   cancel, 404-masked cross-member access). 38/38 tests incl. live Postgres;
   live HTTP smoke passed. `brain.md` §6 and `docs/HANDOFF.md` updated.
+- **2026-08-26** — Increment 4 shipped: owned `LlmAdapter` contract (Contract
+  Gate held — zero vendor code; routing stays UNKNOWN_RFI), member-scoped
+  `AgentToolbox` (foreign requests structurally invisible), `TriageAgent`
+  loop with iteration ceiling and safe handoff, remote-resolution journey
+  tested end to end on the spine. Fixed a real defect the process surfaced:
+  transition idempotency keys are now scoped per request. 45/45 tests.

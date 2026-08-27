@@ -131,7 +131,9 @@ export class RequestService {
       actorType: actor.type,
       actorId: actor.id,
       calculationRulesVersion: CALCULATION_RULES_VERSION,
-      idempotencyKey: `request.transition:${to}:${idempotencyKey}`,
+      // Scoped by request id: the same client key on two different requests
+      // must never collide into a silent no-op.
+      idempotencyKey: `request.transition:${requestId}:${to}:${idempotencyKey}`,
       occurredAt: now,
     });
     if ((event.payload as { nonce?: string }).nonce !== nonce) {

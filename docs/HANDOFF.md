@@ -1,6 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 3 complete; pushed to
+Last updated: 2026-08-26 (Increment 4 complete; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -15,9 +15,9 @@ reproducible timeline.
 |---|-----------|--------|
 | 1 | Project skeleton + config + evidence table | DONE |
 | 2 | Auth + member/provider principals | DONE |
-| 3 | Request create + append-only events | **DONE** (this hand-off) |
-| 4 | Basic AI agent tool-calling loop | **NEXT** |
-| 5 | Matching interface (mock providers) | pending |
+| 3 | Request create + append-only events | DONE |
+| 4 | Basic AI agent tool-calling loop | **DONE** (this hand-off) |
+| 5 | Matching interface (mock providers) | **NEXT** |
 | 6 | Redis presence + WS status | pending |
 | 7 | Stripe membership/incident skeleton | pending |
 | 8–12 | Live provider adapter, tracking/ETA, reconciliation, observability, first paid path | pending |
@@ -80,6 +80,31 @@ reproducible timeline.
   CLAUDE.md → brain.md → agent/* → this file). Pitlink-only content;
   residue-scanned.
 
+### Increment 4 decisions (AI agent loop)
+
+- `LlmAdapter` (`src/agents/llm.ts`) is the owned contract; NO vendor
+  implementation exists yet because LLM routing/model names are UNKNOWN_RFI.
+  `ScriptedLlmAdapter` (steps may be functions of the transcript) makes the
+  loop fully testable offline. When the founder decides routing, write the
+  vendor adapter behind this interface — domain code must not change.
+- `AgentToolbox` is bound to one member session; every request-touching tool
+  proves ownership first ("not found" for foreign requests — tested).
+  Tool effects derive idempotency keys from `conversationId + toolCallId`, so
+  a retried tool call cannot duplicate a request.
+- `TriageAgent` loop: max 8 iterations, then a safe operator-handoff message
+  (`exhausted: true`). Tool failures are returned to the model as results,
+  never thrown. Actor attribution: creates/cancels as the member,
+  triage/remote-resolve as `system` (id `triage-agent`).
+- **Defect found & fixed:** transition idempotency keys were globally
+  namespaced; the same client key on two different requests collided into a
+  silent no-op. Keys are now scoped
+  `request.transition:<requestId>:<to>:<key>` — regression-tested. (Found
+  because the integration test's static keys replayed across runs against the
+  persistent DB — replay semantics were working exactly as designed.)
+- The agent loop is domain-level only; no HTTP conversation endpoint yet —
+  that lands with (or after) the real LLM adapter decision, since a scripted
+  conversation over HTTP proves nothing new.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -107,14 +132,16 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 4)
+## Next active task (Increment 5)
 
-Basic AI agent tool-calling loop: an owned LLM adapter interface (Contract
-Gate — no OpenAI SDK in domain code; LLM routing/model names are UNKNOWN_RFI,
-so the adapter is configured, never hard-coded), a conversational triage loop
-in `src/agents/` whose tools call `RequestService` (create on behalf of the
-authenticated member, transition to `triaged`, attempt the remote-resolution
-path first), and evidence events for agent actions (actor_type `system`).
-A deterministic/mock LLM adapter makes the loop fully testable without any
-vendor key. After this, increment 5 (mock matching) completes the Phase 0
-exit criterion path.
+Matching interface with mock providers: an owned `MatchingEngine` interface
+in `src/matching/` that takes a triaged request and produces a provider
+assignment (`request.matched` evidence, actor `system`), backed by a mock
+provider pool for Phase 0 (seeded providers in DEFAULT_CITY with simple
+nearest/available selection — real presence comes with increment 6's Redis
+work). Provider offer/accept can be modeled as evidence events now
+(`provider.offered`, `provider.accepted`) so Phase 1's live flow drops in
+behind the same interface. Respect ENABLE_PROVIDER_MARKETPLACE flag. After
+this, the full Phase 0 exit-criterion path (create → triage → match → track →
+close) needs only tracking events (increment 9 can be mocked minimally) and
+is provable end to end.

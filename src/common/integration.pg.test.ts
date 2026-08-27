@@ -78,9 +78,12 @@ describe.skipIf(!DATABASE_URL)("postgres integration", () => {
       { serviceType: "jump_start", city: "los-angeles", lat: 34.05, lng: -118.24 },
       `it-${randomUUID()}`
     );
-    await service.transition({ type: "system", id: "matching" }, request.id, "triaged", "t1");
-    await service.transition({ type: "system", id: "agent" }, request.id, "resolved", "t2");
-    const closed = await service.transition({ type: "ops", id: randomUUID() }, request.id, "closed", "t3");
+    // Keys must be unique per run: the evidence table persists across test
+    // runs and a reused key is (correctly) treated as a replay.
+    const run = randomUUID();
+    await service.transition({ type: "system", id: "matching" }, request.id, "triaged", `t1-${run}`);
+    await service.transition({ type: "system", id: "agent" }, request.id, "resolved", `t2-${run}`);
+    const closed = await service.transition({ type: "ops", id: randomUUID() }, request.id, "closed", `t3-${run}`);
     expect(closed.status).toBe("closed");
 
     const timeline = await service.timeline(request.id);
