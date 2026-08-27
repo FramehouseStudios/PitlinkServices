@@ -1,5 +1,6 @@
 # matching module
 
-Boundary and purpose are defined in the Technical Architecture Blueprint §3–§5.
-Not yet implemented — see docs/HANDOFF.md for the delivery order. Domain code
-here must not import vendor SDKs directly (Contract Gate).
+Triaged request → nearest capable available provider. Offer/accept recorded
+as separate evidence events; match failures measurable on the spine. Supply
+comes from any ProviderDirectory (mock or live presence). See docs/HANDOFF.md
+increment 5 notes.

@@ -10,9 +10,9 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–6 complete, 7 next. The
-  Phase 0 exit criterion passes as an executable test
-  (`src/phase0.exit.test.ts`).
+- **Status:** Phase 0 — Foundation. Increments 1–7 complete; 9 next (8 is
+  Phase 1-gated, 12 needs founder pricing + Stripe keys). The Phase 0 exit
+  criterion passes as an executable test (`src/phase0.exit.test.ts`).
 
 ---
 
@@ -235,3 +235,11 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   scoped WebSocket status surface (auth+ownership before subscribe, snapshot
   then live events). vitest 2→3: npm audit at zero vulnerabilities. 60/60
   tests incl. live Postgres + live Redis; entrypoint boot-verified.
+- **2026-08-26** — Increment 7 shipped: owned PaymentsAdapter (no Stripe SDK
+  until keys + terms; zero amount constants), payment lifecycle on the spine
+  with crash-recovery (one intent, one outcome, one charge under retries),
+  exactly-once WebhookIngestor (idempotency + dead-letter + replay).
+  Intelligence memo on founder-supplied roadside-app fork
+  (docs/intel/roadside-app-review.md): mine don't merge; vehicles +
+  post-resolution feedback added to backlog; bidding model filed inside the
+  pricing RFI. 68/68 tests.

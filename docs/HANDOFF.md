@@ -1,6 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 6 complete; pushed to
+Last updated: 2026-08-26 (Increment 7 complete; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -18,9 +18,13 @@ reproducible timeline.
 | 3 | Request create + append-only events | DONE |
 | 4 | Basic AI agent tool-calling loop | DONE |
 | 5 | Matching interface (mock providers) | DONE |
-| 6 | Redis presence + WS status | **DONE** (this hand-off) |
-| 7 | Stripe membership/incident skeleton | **NEXT** |
-| 8–12 | Live provider adapter, tracking/ETA, reconciliation, observability, first paid path | pending |
+| 6 | Redis presence + WS status | DONE |
+| 7 | Stripe membership/incident skeleton | **DONE** (this hand-off) |
+| 8 | Live provider adapter + acceptance | pending (Phase 1 gated — needs real providers) |
+| 9 | Tracking + ETA events | **NEXT** |
+| 10 | Reconciliation + metric calculation rules | pending |
+| 11 | Observability baseline | pending |
+| 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
 
@@ -152,6 +156,31 @@ reproducible timeline.
 - Entrypoint (`src/index.ts`) now boots API + WS + Redis presence together;
   boot-verified against the live stack.
 
+### Increment 7 decisions (payments)
+
+- `PaymentsAdapter` (`src/payments/adapter.ts`) is the owned rail contract;
+  `FakePaymentsAdapter` (deterministic, idempotent, failure/crash injection)
+  is the only implementation until Stripe keys + commercial terms exist.
+  NO amount constant exists anywhere — every amountCents is a parameter
+  (pricing/packaging is founder RFI #1).
+- `PaymentsService`: `payment.intent_created` on the spine BEFORE the rail is
+  touched; `payment.succeeded`/`payment.failed` as the outcome record.
+  Crash-recovery tested: crash between intent and outcome → retry with the
+  same chargeKey completes with exactly one intent, one outcome, one charge
+  (prior-outcome scan by chargeKey).
+- `WebhookIngestor` (`src/payments/webhook.ts`): hard rule 4 in full —
+  idempotency by vendor delivery id, dead-letter for malformed/unknown/
+  handler-failure, replay that consumes the letter. Handler failures do NOT
+  mark processed (retryable). The future Stripe adapter normalizes vendor
+  payloads into the owned envelope before ingestion.
+- Intelligence memo `docs/intel/roadside-app-review.md`: reviewed the
+  founder-supplied FramehouseStudios/roadside-app fork (cloned at
+  `~/roadside-app`). Verdict: mine, don't merge. Actionable backlog captured:
+  vehicles bounded context (triage needs it), post-resolution feedback as
+  spine events, bidding-vs-dispatch documented inside the pricing RFI.
+  Rejected: shared user table, card storage in our DB, session auth, its
+  deprecated client stack.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -179,16 +208,15 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 7)
+## Next active task (Increment 9 — 8 is Phase 1-gated)
 
-Stripe membership/incident skeleton behind an owned payments adapter
-(`src/payments/`): a `PaymentsAdapter` interface (create customer, attach
-membership subscription, charge per-incident, webhook ingestion) with a
-deterministic fake implementation for Phase 0 — NO Stripe SDK until keys and
-commercial terms exist (pricing/packaging is an open RFI, so amounts are
-parameters, never constants). Webhook ingestion must follow hard rule 4:
-idempotency key + dead-letter + replay. Payment lifecycle events go on the
-spine (`payment.intent_created`, `payment.succeeded`, `payment.failed`) so
-cost-per-incident is derivable later. Wire nothing customer-facing yet —
-this is the evidence-and-interface skeleton the first paid path (increment
-12) will stand on.
+Tracking + ETA events: provider location pings during en_route
+(`request.location_update` evidence with lat/lng + computed distance-to-
+member; throttled), ETA derivation as a versioned calculation
+(straight-line/speed heuristic now — a maps adapter slots in later behind an
+owned interface), pushed to the member over the existing WS surface. Then
+increment 10 (reconciliation + metric rules: median request→arrival and
+cost/incident as versioned calculations over the spine) — the two together
+make the metrics story complete. Increment 8 (live provider adapter) stays
+gated on real providers; increment 12 (first paid path) stays gated on
+founder pricing + Stripe keys [ABSOLUTELY-HUMAN gate].

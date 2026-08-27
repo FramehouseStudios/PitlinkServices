@@ -1,5 +1,5 @@
 # agents module
 
-Boundary and purpose are defined in the Technical Architecture Blueprint §3–§5.
-Not yet implemented — see docs/HANDOFF.md for the delivery order. Domain code
-here must not import vendor SDKs directly (Contract Gate).
+Conversational AI orchestration. Owned LlmAdapter contract (no vendor SDK —
+LLM routing is an open RFI), member-scoped AgentToolbox, TriageAgent loop
+with iteration ceiling. See docs/HANDOFF.md increment 4 notes.

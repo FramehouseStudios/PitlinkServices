@@ -1,5 +1,6 @@
 # payments module
 
-Boundary and purpose are defined in the Technical Architecture Blueprint §3–§5.
-Not yet implemented — see docs/HANDOFF.md for the delivery order. Domain code
-here must not import vendor SDKs directly (Contract Gate).
+Owned PaymentsAdapter contract (no Stripe SDK until keys + commercial terms
+exist; amounts are always parameters), payment lifecycle on the evidence
+spine, and exactly-once webhook ingestion with dead-letter + replay. See
+docs/HANDOFF.md increment 7 notes.
