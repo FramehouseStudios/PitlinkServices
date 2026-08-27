@@ -55,6 +55,26 @@ export function paidCentsByCurrency(timeline: EvidenceEvent[]): Record<string, n
   return totals;
 }
 
+/** Provider quality from feedback events: providerId → count + average rating. */
+export function providerRatings(
+  timelines: EvidenceEvent[][]
+): Record<string, { count: number; avgRating: number }> {
+  const sums: Record<string, { count: number; total: number }> = {};
+  for (const timeline of timelines) {
+    for (const event of timeline) {
+      if (event.eventType !== "request.feedback") continue;
+      const p = event.payload as { rating?: number; providerId?: string };
+      if (typeof p.rating !== "number" || !p.providerId) continue;
+      const entry = (sums[p.providerId] ??= { count: 0, total: 0 });
+      entry.count++;
+      entry.total += p.rating;
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(sums).map(([id, { count, total }]) => [id, { count, avgRating: total / count }])
+  );
+}
+
 /** Standard median: mean of the two middle values for even counts. */
 export function median(values: number[]): number | null {
   if (values.length === 0) return null;

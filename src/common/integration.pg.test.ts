@@ -96,6 +96,17 @@ describe.skipIf(!DATABASE_URL)("postgres integration", () => {
     expect((await service.get(request.id))?.status).toBe("closed");
   });
 
+  it("vehicle store: ownership is structural against real Postgres", async () => {
+    const { PostgresVehicleStore } = await import("../members/vehicles.js");
+    const store = new PostgresVehicleStore(pool);
+    const owner = randomUUID();
+    const stranger = randomUUID();
+    const vehicle = await store.create(owner, { make: "Honda", model: "Civic", powertrain: "ice" });
+    expect((await store.findOwned(owner, vehicle.id))?.id).toBe(vehicle.id);
+    expect(await store.findOwned(stranger, vehicle.id)).toBeNull();
+    expect(await store.listByMember(owner)).toHaveLength(1);
+  });
+
   it("principal stores: isolated populations, duplicate email rejected per table", async () => {
     const members = new PostgresPrincipalStore(pool, "member");
     const providers = new PostgresPrincipalStore(pool, "provider");

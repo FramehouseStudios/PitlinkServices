@@ -1,6 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 11 + provider API surface complete;
+Last updated: 2026-08-26 (Backlog items 1+2 — vehicles + feedback — complete;
 pushed to https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -24,7 +24,9 @@ reproducible timeline.
 | 9 | Tracking + ETA events | **DONE** (this hand-off) |
 | 10 | Reconciliation + metric calculation rules | **DONE** (this hand-off) |
 | 11 | Observability baseline | **DONE** (this hand-off) |
-| — | Provider API surface (beyond plan) | **DONE** (this hand-off) |
+| — | Provider API surface (beyond plan) | DONE |
+| — | Vehicles bounded context (backlog 1) | **DONE** (this hand-off) |
+| — | Post-resolution feedback (backlog 2) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -237,6 +239,27 @@ reproducible timeline.
 - OTel/Sentry remain env placeholders — wire exporters when a deploy target
   exists.
 
+### Vehicles + feedback decisions (backlog 1+2)
+
+- Vehicles (`src/members/vehicles.ts`, migration 004): make/model/year/
+  powertrain (ice|ev|hybrid|unknown) — deliberately NO plate or VIN (PII
+  minimization) until a feature needs them. Ownership structural: every read
+  requires memberId. Attaching a vehicle to a request stores `vehicleId` on
+  the projection AND a snapshot (make/model/powertrain) inside the
+  `request.created` payload, so triage context stays reproducible even if
+  the vehicle record later changes. API: POST/GET /vehicles; `vehicleId`
+  optional on request create (404 if not owned).
+- Feedback: `RequestService.feedback` — owning member only (404 mask for
+  everyone else, identity-before-state), only after resolved/closed, rating
+  integer 1–5 + optional comment (≤2000 chars), ONE per request
+  (`feedback:${requestId}` key; replay returns the original — a member
+  cannot revise their rating; revision would need a compensating-event
+  design, deliberately deferred). Payload carries assigned providerId when
+  one exists, so provider quality aggregates from the spine.
+- `providerRatings()` added to metric calculations (additive — no version
+  bump): providerId → {count, avgRating}. Remote resolutions produce
+  feedback without providerId and are excluded from provider quality.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -271,11 +294,9 @@ surface). Remaining gates: 8 (live providers — Phase 1 physical work),
 12 (first paid path — founder pricing + Stripe keys [ABSOLUTELY-HUMAN]).
 
 Highest-leverage ungated backlog, in order:
-1. Vehicles bounded context (intel memo): member vehicles, optional
-   vehicleId on request create — triage quality depends on it.
-2. Post-resolution feedback (`request.feedback` evidence; member-only,
-   own-request-only) — retention signal + provider quality from the spine.
-3. Ops read surface: fleet metrics endpoint (ops principal) serving
-   `fleetMetrics()` over recent requests + reconciliation sweep.
-4. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
-   minimal UI: one screen to request help, one live tracking view.
+1. Ops read surface: fleet metrics endpoint (ops principal) serving
+   `fleetMetrics()` + `providerRatings()` over recent requests +
+   reconciliation sweep. Needs an ops signup path decision: ops principals
+   should NOT be self-signup — seed via script/env, surface the choice.
+2. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
+   minimal UI: one screen to request help, one live tracking view (WS).

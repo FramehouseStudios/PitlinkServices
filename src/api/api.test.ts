@@ -10,6 +10,7 @@ import { MatchingEngine } from "../matching/engine.js";
 import { InMemoryProviderPresence } from "../realtime/presence.js";
 import { PresenceProviderDirectory } from "../realtime/directory.js";
 import { TrackingService } from "../realtime/tracking.js";
+import { InMemoryVehicleStore } from "../members/vehicles.js";
 import { createApi } from "./server.js";
 import { signToken } from "../common/auth/token.js";
 
@@ -35,6 +36,7 @@ beforeAll(async () => {
     defaultCity: "los-angeles",
     members: new InMemoryPrincipalStore("member"),
     providers: new InMemoryPrincipalStore("provider"),
+    vehicles: new InMemoryVehicleStore(),
     requests,
     presence,
     tracking: new TrackingService(evidence, requests, { minPingIntervalSeconds: 0 }),
@@ -227,6 +229,70 @@ describe("member API", () => {
     expect(
       (await call("POST", `/requests/${id}/ping`, { token: imposter.json.token, body: { lat: 34, lng: -118 } })).status
     ).toBe(404);
+  });
+
+  it("vehicles: create, list own, attach to a request; other members' vehicles are invisible", async () => {
+    const alice = await signup("veh-alice@example.com");
+    const mallory = await signup("veh-mallory@example.com");
+    const created = await call("POST", "/vehicles", {
+      token: alice,
+      body: { make: "Tesla", model: "Model 3", year: 2022, powertrain: "ev" },
+    });
+    expect(created.status).toBe(201);
+    const vehicleId = created.json.id as string;
+
+    expect((await call("GET", "/vehicles", { token: alice })).json.vehicles).toHaveLength(1);
+    expect((await call("GET", "/vehicles", { token: mallory })).json.vehicles).toHaveLength(0);
+    // Mallory cannot attach Alice's vehicle.
+    expect(
+      (await call("POST", "/requests", { token: mallory, key: "vm-1", body: { serviceType: "tow", lat: 34, lng: -118, vehicleId } }))
+        .status
+    ).toBe(404);
+    // Bad powertrain rejected.
+    expect(
+      (await call("POST", "/vehicles", { token: alice, body: { make: "X", model: "Y", powertrain: "nuclear" } })).status
+    ).toBe(400);
+
+    // Alice attaches it; the creation event carries the triage snapshot.
+    const request = await call("POST", "/requests", {
+      token: alice,
+      key: "va-1",
+      body: { serviceType: "ev_charge", lat: 34, lng: -118, vehicleId },
+    });
+    expect(request.status).toBe(201);
+    expect(request.json.vehicleId).toBe(vehicleId);
+    const timeline = await call("GET", `/requests/${request.json.id}/timeline`, { token: alice });
+    expect(timeline.json.events[0].payload.vehicle).toMatchObject({ powertrain: "ev", make: "Tesla" });
+  });
+
+  it("feedback: owner only, post-resolution only, once only", async () => {
+    const member = await signup("fb-member@example.com");
+    const other = await signup("fb-other@example.com");
+    const created = await call("POST", "/requests", {
+      token: member,
+      key: "fb-1",
+      body: { serviceType: "jump_start", lat: 34, lng: -118 },
+    });
+    const id = created.json.id as string;
+
+    // Too early: request not resolved.
+    expect((await call("POST", `/requests/${id}/feedback`, { token: member, body: { rating: 5 } })).status).toBe(400);
+
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "fb-t");
+    await requests.transition({ type: "system", id: "t" }, id, "resolved", "fb-r");
+
+    // Wrong member: 404, nothing learned.
+    expect((await call("POST", `/requests/${id}/feedback`, { token: other, body: { rating: 1 } })).status).toBe(404);
+    // Bad rating.
+    expect((await call("POST", `/requests/${id}/feedback`, { token: member, body: { rating: 6 } })).status).toBe(400);
+
+    const ok = await call("POST", `/requests/${id}/feedback`, { token: member, body: { rating: 5, comment: "fast" } });
+    expect(ok.status).toBe(201);
+    // Second submission returns the ORIGINAL rating — one feedback per request.
+    const replay = await call("POST", `/requests/${id}/feedback`, { token: member, body: { rating: 1 } });
+    expect(replay.json.rating).toBe(5);
+    const timeline = await call("GET", `/requests/${id}/timeline`, { token: member });
+    expect(timeline.json.events.filter((e: any) => e.eventType === "request.feedback")).toHaveLength(1);
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

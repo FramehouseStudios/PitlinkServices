@@ -5,6 +5,7 @@ import pg from "pg";
 import { loadConfig } from "./common/config.js";
 import { InMemoryAuthAuditSink } from "./common/auth/guard.js";
 import { PostgresPrincipalStore } from "./common/auth/principalStore.js";
+import { PostgresVehicleStore } from "./members/vehicles.js";
 import { PostgresEvidenceStore } from "./common/evidence/postgresStore.js";
 import { PostgresRequestStore } from "./requests/store.js";
 import { RequestService } from "./requests/service.js";
@@ -46,6 +47,7 @@ const api = createApi({
   defaultCity: config.defaultCity,
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
+  vehicles: new PostgresVehicleStore(pool),
   requests,
   presence,
   tracking: new TrackingService(evidence, requests, {}, (e) => bus.publish(e)),

@@ -26,6 +26,10 @@ export interface CreateRequestInput {
   city: string;
   lat: number;
   lng: number;
+  /** Ownership must be verified by the caller (API resolves via findOwned).
+   * The snapshot goes into the creation event so triage context is
+   * reproducible even if the vehicle record later changes. */
+  vehicle?: { id: string; make: string; model: string; powertrain: string };
 }
 
 export class RequestService {
@@ -64,7 +68,13 @@ export class RequestService {
     const event = await this.evidence.append({
       requestId,
       eventType: "request.created",
-      payload: { serviceType: input.serviceType, city: input.city, lat: input.lat, lng: input.lng },
+      payload: {
+        serviceType: input.serviceType,
+        city: input.city,
+        lat: input.lat,
+        lng: input.lng,
+        ...(input.vehicle ? { vehicle: input.vehicle } : {}),
+      },
       actorType: actor.type,
       actorId: actor.id,
       calculationRulesVersion: CALCULATION_RULES_VERSION,
@@ -86,11 +96,57 @@ export class RequestService {
       lat: input.lat,
       lng: input.lng,
       status: "created",
+      ...(input.vehicle ? { vehicleId: input.vehicle.id } : {}),
       createdAt: now,
       updatedAt: now,
     };
     await this.requests.insert(record);
     return record;
+  }
+
+  /**
+   * Post-resolution feedback: the owning member, once, after resolution.
+   * One feedback per request — a replay returns the original event.
+   */
+  async feedback(
+    actor: Actor,
+    requestId: string,
+    rating: number,
+    comment?: string,
+    now: Date = new Date()
+  ): Promise<EvidenceEvent> {
+    const record = await this.requests.findById(requestId);
+    // Identity before state: non-owners learn nothing, not even existence.
+    if (!record || actor.type !== "member" || actor.id !== record.memberId) {
+      throw new RequestNotFoundError(requestId);
+    }
+    if (record.status !== "resolved" && record.status !== "closed") {
+      throw new RequestValidationError("feedback is accepted only after resolution");
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new RequestValidationError("rating must be an integer from 1 to 5");
+    }
+    if (comment !== undefined && comment.length > 2000) {
+      throw new RequestValidationError("comment too long");
+    }
+    const existing = (await this.evidence.timeline(requestId)).find(
+      (e) => e.eventType === "request.feedback"
+    );
+    if (existing) return existing;
+
+    const providerId = await this.assignedProvider(requestId);
+    const event = await this.evidence.append({
+      requestId,
+      eventType: "request.feedback",
+      payload: { rating, ...(comment ? { comment } : {}), ...(providerId ? { providerId } : {}) },
+      actorType: "member",
+      actorId: actor.id,
+      calculationRulesVersion: CALCULATION_RULES_VERSION,
+      idempotencyKey: `feedback:${requestId}`,
+      occurredAt: now,
+    });
+    this.onEvent?.(event);
+    return event;
   }
 
   async transition(

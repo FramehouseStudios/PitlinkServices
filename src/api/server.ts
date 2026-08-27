@@ -14,6 +14,7 @@ import {
 } from "../requests/types.js";
 import type { ProviderPresence } from "../realtime/presence.js";
 import type { TrackingService } from "../realtime/tracking.js";
+import { VehicleValidationError, type Powertrain, type VehicleStore } from "../members/vehicles.js";
 import { silentLogger, type Logger } from "../common/logger.js";
 import type { PrincipalType } from "../common/auth/principals.js";
 
@@ -23,6 +24,7 @@ export interface ApiDeps {
   defaultCity: string;
   members: PrincipalStore;
   providers: PrincipalStore;
+  vehicles: VehicleStore;
   requests: RequestService;
   presence: ProviderPresence;
   tracking: TrackingService;
@@ -214,10 +216,38 @@ export function createApi(deps: ApiDeps): Server {
       return [200, result];
     }
 
+    if (route === "POST /vehicles") {
+      const claims = memberClaims(req);
+      const body = await readJson(req);
+      try {
+        const vehicle = await deps.vehicles.create(claims.sub, {
+          make: str(body, "make"),
+          model: str(body, "model"),
+          ...(body.year !== undefined ? { year: num(body, "year") } : {}),
+          ...(typeof body.powertrain === "string" ? { powertrain: body.powertrain as Powertrain } : {}),
+        });
+        return [201, vehicle];
+      } catch (err) {
+        if (err instanceof VehicleValidationError) throw new HttpError(400, err.message);
+        throw err;
+      }
+    }
+
+    if (route === "GET /vehicles") {
+      const claims = memberClaims(req);
+      return [200, { vehicles: await deps.vehicles.listByMember(claims.sub) }];
+    }
+
     if (route === "POST /requests") {
       const claims = memberClaims(req);
       const key = idempotencyKey(req);
       const body = await readJson(req);
+      let vehicle;
+      if (body.vehicleId !== undefined) {
+        const owned = await deps.vehicles.findOwned(claims.sub, str(body, "vehicleId"));
+        if (!owned) throw new HttpError(404, "vehicle not found");
+        vehicle = { id: owned.id, make: owned.make, model: owned.model, powertrain: owned.powertrain };
+      }
       const record = await deps.requests.create(
         { type: "member", id: claims.sub },
         {
@@ -225,10 +255,24 @@ export function createApi(deps: ApiDeps): Server {
           city: typeof body.city === "string" && body.city.trim() ? body.city : deps.defaultCity,
           lat: num(body, "lat"),
           lng: num(body, "lng"),
+          ...(vehicle ? { vehicle } : {}),
         },
         key
       );
       return [201, record];
+    }
+
+    const feedbackMatch = /^POST \/requests\/([0-9a-f-]{36})\/feedback$/.exec(route);
+    if (feedbackMatch) {
+      const claims = memberClaims(req);
+      const body = await readJson(req);
+      const event = await deps.requests.feedback(
+        { type: "member", id: claims.sub },
+        feedbackMatch[1]!,
+        num(body, "rating"),
+        typeof body.comment === "string" ? body.comment : undefined
+      );
+      return [201, { requestId: event.requestId, rating: (event.payload as { rating: number }).rating }];
     }
 
     const requestMatch = /^GET \/requests\/([0-9a-f-]{36})$/.exec(route);

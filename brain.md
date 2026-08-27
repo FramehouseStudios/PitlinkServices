@@ -14,8 +14,8 @@
   complete (1–7, 9–11 + provider HTTP surface). Gated: 8 (live providers —
   Phase 1), 12 (first paid path — founder pricing + Stripe keys). The Phase 0
   exit criterion passes as an executable test (`src/phase0.exit.test.ts`).
-  Next: backlog in `docs/HANDOFF.md` (vehicles, feedback, ops metrics
-  endpoint, member web surface).
+  Next: backlog in `docs/HANDOFF.md` (ops metrics endpoint, member web
+  surface). Vehicles + post-resolution feedback shipped 2026-08-26.
 
 ---
 
@@ -260,3 +260,8 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   unauthorized actors learn nothing from errors (API masks as 404). Owned
   redacting JSON logger (hard rule 9 structural), /health with dependency
   probes, access logs. Provider journey fully drivable over HTTP. 82/82.
+- **2026-08-26** — Backlog 1+2 shipped: vehicles bounded context (no
+  plate/VIN — PII minimization; triage snapshot embedded in
+  request.created so context is reproducible) and post-resolution feedback
+  (owner-only, post-resolution, one per request, providerId in payload;
+  providerRatings() aggregation added to metric rules, additive). 86/86.

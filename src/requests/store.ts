@@ -43,6 +43,7 @@ interface Row {
   lat: number;
   lng: number;
   status: RequestStatus;
+  vehicle_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -56,6 +57,7 @@ function toRecord(row: Row): RequestRecord {
     lat: row.lat,
     lng: row.lng,
     status: row.status,
+    ...(row.vehicle_id ? { vehicleId: row.vehicle_id } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -66,10 +68,10 @@ export class PostgresRequestStore implements RequestStore {
 
   async insert(record: RequestRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO requests (id, member_id, service_type, city, lat, lng, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO requests (id, member_id, service_type, city, lat, lng, status, vehicle_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (id) DO NOTHING`,
-      [record.id, record.memberId, record.serviceType, record.city, record.lat, record.lng, record.status, record.createdAt, record.updatedAt]
+      [record.id, record.memberId, record.serviceType, record.city, record.lat, record.lng, record.status, record.vehicleId ?? null, record.createdAt, record.updatedAt]
     );
   }
 

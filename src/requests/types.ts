@@ -49,6 +49,7 @@ export interface RequestRecord {
   lat: number;
   lng: number;
   status: RequestStatus;
+  vehicleId?: string;
   createdAt: Date;
   updatedAt: Date;
 }

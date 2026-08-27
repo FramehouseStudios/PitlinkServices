@@ -8,6 +8,7 @@ import {
   isRemoteResolution,
   median,
   paidCentsByCurrency,
+  providerRatings,
   requestToArrivalMinutes,
 } from "./calculations.js";
 import { deriveStatus, reconcileRequest } from "./reconcile.js";
@@ -80,6 +81,22 @@ describe("metric calculations", () => {
     expect(report.remoteResolutionRate).toBe(0.25); // 1 remote of 4 resolved
     expect(report.matchFailureCount).toBe(0);
     expect(report.rulesVersion).toBeTruthy();
+  });
+
+  it("provider ratings aggregate from feedback events across timelines", async () => {
+    const a = await journey("dispatched", 14);
+    await a.requests.feedback(MEMBER, a.record.id, 5, "great");
+    const b = await journey("dispatched", 30);
+    await b.requests.feedback(MEMBER, b.record.id, 3);
+    const c = await journey("remote"); // no provider — feedback carries no providerId
+    await c.requests.feedback(MEMBER, c.record.id, 4);
+    const ratings = providerRatings([
+      await a.evidence.timeline(a.record.id),
+      await b.evidence.timeline(b.record.id),
+      await c.evidence.timeline(c.record.id),
+    ]);
+    expect(ratings[PROVIDER.id]).toEqual({ count: 2, avgRating: 4 });
+    expect(Object.keys(ratings)).toHaveLength(1);
   });
 
   it("median: odd, even, empty", () => {
