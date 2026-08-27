@@ -265,3 +265,7 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   request.created so context is reproducible) and post-resolution feedback
   (owner-only, post-resolution, one per request, providerId in payload;
   providerRatings() aggregation added to metric rules, additive). 86/86.
+- **2026-08-26** — Ops read surface shipped: ops principals seeded by script
+  only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
+  rules over recent timelines), /ops/reconciliation (drift surfaced, never
+  repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.

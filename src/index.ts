@@ -47,6 +47,7 @@ const api = createApi({
   defaultCity: config.defaultCity,
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
+  ops: new PostgresPrincipalStore(pool, "ops"),
   vehicles: new PostgresVehicleStore(pool),
   requests,
   presence,

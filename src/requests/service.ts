@@ -223,6 +223,10 @@ export class RequestService {
     return this.requests.findById(requestId);
   }
 
+  async listRecent(limit: number): Promise<RequestRecord[]> {
+    return this.requests.listRecent(limit);
+  }
+
   async timeline(requestId: string): Promise<EvidenceEvent[]> {
     return this.evidence.timeline(requestId);
   }

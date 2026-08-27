@@ -15,6 +15,8 @@ import {
 import type { ProviderPresence } from "../realtime/presence.js";
 import type { TrackingService } from "../realtime/tracking.js";
 import { VehicleValidationError, type Powertrain, type VehicleStore } from "../members/vehicles.js";
+import { fleetMetrics, providerRatings } from "../common/metrics/calculations.js";
+import { reconcileRequest } from "../common/metrics/reconcile.js";
 import { silentLogger, type Logger } from "../common/logger.js";
 import type { PrincipalType } from "../common/auth/principals.js";
 
@@ -24,6 +26,9 @@ export interface ApiDeps {
   defaultCity: string;
   members: PrincipalStore;
   providers: PrincipalStore;
+  /** Ops principals are seeded by script (scripts/seed-ops.ts), NEVER
+   * self-signup — the API exposes only ops login. */
+  ops: PrincipalStore;
   vehicles: VehicleStore;
   requests: RequestService;
   presence: ProviderPresence;
@@ -160,6 +165,28 @@ export function createApi(deps: ApiDeps): Server {
     if (route === "POST /members/login") return login(req, deps.members);
     if (route === "POST /providers/signup") return signup(req, deps.providers);
     if (route === "POST /providers/login") return login(req, deps.providers);
+    // Deliberately no POST /ops/signup — ops principals are seeded by script.
+    if (route === "POST /ops/login") return login(req, deps.ops);
+
+    if (route === "GET /ops/metrics") {
+      claims(req, "ops");
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 500);
+      const recent = await deps.requests.listRecent(limit);
+      const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
+      return [200, { ...fleetMetrics(timelines), providerRatings: providerRatings(timelines) }];
+    }
+
+    if (route === "GET /ops/reconciliation") {
+      claims(req, "ops");
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 500);
+      const recent = await deps.requests.listRecent(limit);
+      const discrepancies = [];
+      for (const record of recent) {
+        const result = reconcileRequest(await deps.requests.timeline(record.id), record);
+        if (!result.consistent) discrepancies.push({ requestId: record.id, ...result });
+      }
+      return [200, { checked: recent.length, consistent: recent.length - discrepancies.length, discrepancies }];
+    }
 
     if (route === "POST /providers/heartbeat") {
       const provider = providerClaims(req);

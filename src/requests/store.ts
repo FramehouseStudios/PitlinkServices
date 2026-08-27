@@ -12,6 +12,8 @@ export interface RequestStore {
    * idempotency-friendly). Returns true if a row was updated.
    */
   setStatus(id: string, from: RequestStatus, to: RequestStatus, at: Date): Promise<boolean>;
+  /** Most recently created requests, newest first. Ops/reporting reads. */
+  listRecent(limit: number): Promise<RequestRecord[]>;
 }
 
 export class InMemoryRequestStore implements RequestStore {
@@ -32,6 +34,13 @@ export class InMemoryRequestStore implements RequestStore {
     record.status = to;
     record.updatedAt = at;
     return true;
+  }
+
+  async listRecent(limit: number): Promise<RequestRecord[]> {
+    return [...this.byId.values()]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+      .map((r) => ({ ...r }));
   }
 }
 
@@ -86,5 +95,13 @@ export class PostgresRequestStore implements RequestStore {
       [id, from, to, at]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async listRecent(limit: number): Promise<RequestRecord[]> {
+    const result = await this.pool.query<Row>(
+      "SELECT * FROM requests ORDER BY created_at DESC LIMIT $1",
+      [limit]
+    );
+    return result.rows.map(toRecord);
   }
 }

@@ -21,11 +21,14 @@ let audit: InMemoryAuthAuditSink;
 let requests: RequestService;
 let engine: MatchingEngine;
 let healthy = { postgres: true };
+let requestStore: InMemoryRequestStore;
+const opsStore = new InMemoryPrincipalStore("ops");
 
 beforeAll(async () => {
   audit = new InMemoryAuthAuditSink();
   const evidence = new InMemoryEvidenceStore();
-  requests = new RequestService(evidence, new InMemoryRequestStore(), DEFAULT_SERVICE_TYPES);
+  requestStore = new InMemoryRequestStore();
+  requests = new RequestService(evidence, requestStore, DEFAULT_SERVICE_TYPES);
   const presence = new InMemoryProviderPresence();
   engine = new MatchingEngine(new PresenceProviderDirectory(presence), requests, evidence, {
     marketplaceEnabled: true,
@@ -36,6 +39,7 @@ beforeAll(async () => {
     defaultCity: "los-angeles",
     members: new InMemoryPrincipalStore("member"),
     providers: new InMemoryPrincipalStore("provider"),
+    ops: opsStore,
     vehicles: new InMemoryVehicleStore(),
     requests,
     presence,
@@ -293,6 +297,54 @@ describe("member API", () => {
     expect(replay.json.rating).toBe(5);
     const timeline = await call("GET", `/requests/${id}/timeline`, { token: member });
     expect(timeline.json.events.filter((e: any) => e.eventType === "request.feedback")).toHaveLength(1);
+  });
+
+  it("ops surface: script-seeded login, fleet metrics + ratings, reconciliation; no signup path", async () => {
+    // Ops are seeded, never self-signup — the route must not exist.
+    expect(
+      (await call("POST", "/ops/signup", { body: { email: "o@pitlink.com", password: "correct-horse" } })).status
+    ).toBe(404);
+    const { hashPassword } = await import("../common/auth/password.js");
+    await opsStore.create("ops@pitlink.com", await hashPassword("correct-horse"));
+    const opsLogin = await call("POST", "/ops/login", {
+      body: { email: "ops@pitlink.com", password: "correct-horse" },
+    });
+    expect(opsLogin.status).toBe(200);
+    const opsToken = opsLogin.json.token as string;
+
+    // Adversarial: member and provider tokens are rejected on ops reads.
+    const memberToken = await signup("ops-nosy-member@example.com");
+    expect((await call("GET", "/ops/metrics", { token: memberToken })).status).toBe(401);
+    expect((await call("GET", "/ops/reconciliation", { token: memberToken })).status).toBe(401);
+
+    // Seed a resolved journey with feedback so the numbers are non-trivial.
+    const created = await call("POST", "/requests", {
+      token: memberToken,
+      key: "ops-1",
+      body: { serviceType: "jump_start", lat: 34, lng: -118 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "ops-t");
+    await requests.transition({ type: "system", id: "t" }, id, "resolved", "ops-r");
+    await call("POST", `/requests/${id}/feedback`, { token: memberToken, body: { rating: 4 } });
+
+    const metrics = await call("GET", "/ops/metrics", { token: opsToken });
+    expect(metrics.status).toBe(200);
+    expect(metrics.json.requestCount).toBeGreaterThan(0);
+    expect(metrics.json.remoteResolutionRate).toBeGreaterThan(0);
+    expect(metrics.json.rulesVersion).toBeTruthy();
+
+    // Reconciliation: clean now; then tamper the projection and see it caught.
+    const clean = await call("GET", "/ops/reconciliation", { token: opsToken });
+    expect(clean.status).toBe(200);
+    expect(clean.json.discrepancies).toHaveLength(0);
+    const internals = requestStore as unknown as { byId: Map<string, { status: string }> };
+    internals.byId.get(id)!.status = "created"; // simulated projection corruption
+    const dirty = await call("GET", "/ops/reconciliation", { token: opsToken });
+    expect(dirty.json.discrepancies).toMatchObject([
+      { requestId: id, discrepancy: "status_drift", spineStatus: "resolved", projectionStatus: "created" },
+    ]);
+    internals.byId.get(id)!.status = "resolved"; // restore
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

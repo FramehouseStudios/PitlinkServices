@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Backlog items 1+2 — vehicles + feedback — complete;
-pushed to https://github.com/FramehouseStudios/PitlinkServices)
+Last updated: 2026-08-26 (Ops read surface complete; pushed to
+https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
 
@@ -26,7 +26,8 @@ reproducible timeline.
 | 11 | Observability baseline | **DONE** (this hand-off) |
 | — | Provider API surface (beyond plan) | DONE |
 | — | Vehicles bounded context (backlog 1) | **DONE** (this hand-off) |
-| — | Post-resolution feedback (backlog 2) | **DONE** (this hand-off) |
+| — | Post-resolution feedback (backlog 2) | DONE |
+| — | Ops read surface (backlog 3) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -260,6 +261,22 @@ reproducible timeline.
   bump): providerId → {count, avgRating}. Remote resolutions produce
   feedback without providerId and are excluded from provider quality.
 
+### Ops read surface decisions (backlog 3)
+
+- **[DECIDED, CEO autonomy]** Ops principals are NEVER self-signup. The only
+  creation path is `scripts/seed-ops.ts` (env OPS_EMAIL/OPS_PASSWORD;
+  idempotent — reruns leave an existing account untouched). The API exposes
+  only `POST /ops/login`; `/ops/signup` deliberately does not exist (tested).
+- `GET /ops/metrics?limit=` (ops token): `fleetMetrics()` + `providerRatings()`
+  over the most recent requests' timelines (limit capped at 500). All numbers
+  flow through the versioned rules — the endpoint computes nothing itself.
+- `GET /ops/reconciliation?limit=`: reconcileRequest over recent requests;
+  returns checked/consistent counts + discrepancy details. Tested: a
+  corrupted projection surfaces as `status_drift` with both statuses named.
+- Live-verified against the real stack: seed → login → metrics (18 requests
+  in the local DB, all reconciling consistent) → health 200.
+- `RequestStore.listRecent(limit)` added (newest first) for ops reads.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -293,10 +310,10 @@ The Delivery Plan's ungated increments are COMPLETE (1–7, 9–11 + provider
 surface). Remaining gates: 8 (live providers — Phase 1 physical work),
 12 (first paid path — founder pricing + Stripe keys [ABSOLUTELY-HUMAN]).
 
-Highest-leverage ungated backlog, in order:
-1. Ops read surface: fleet metrics endpoint (ops principal) serving
-   `fleetMetrics()` + `providerRatings()` over recent requests +
-   reconciliation sweep. Needs an ops signup path decision: ops principals
-   should NOT be self-signup — seed via script/env, surface the choice.
-2. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
-   minimal UI: one screen to request help, one live tracking view (WS).
+Highest-leverage ungated backlog:
+1. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
+   minimal UI: one screen to request help (signup/login folded in), one live
+   tracking view fed by the WS surface. Serve as static assets from the
+   monolith (no separate frontend deployable — smallest system). After that,
+   the ungated build is genuinely done and the next moves are the founder
+   gates: pricing + Stripe keys (12) and live providers in DEFAULT_CITY (8).
