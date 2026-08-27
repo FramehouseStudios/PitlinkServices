@@ -2,12 +2,27 @@
 // keys) are configuration, never code constants. Missing required values fail
 // loudly at startup rather than surfacing as runtime defects later.
 
+// Default service catalog, from the canonical service categories (Founder
+// Product Brief §3: jump/boost, tire, lockout, fuel/EV, tow, mobile battery).
+// Overridable via SERVICE_TYPES because packaging per type is an open
+// commercial decision.
+export const DEFAULT_SERVICE_TYPES = [
+  "jump_start",
+  "tire_change",
+  "lockout",
+  "fuel_delivery",
+  "ev_charge",
+  "tow",
+  "mobile_battery",
+] as const;
+
 export interface AppConfig {
   databaseUrl: string;
   redisUrl: string;
   jwtSecret: string;
   jwtExpiry: string;
   defaultCity: string;
+  serviceTypes: string[];
   flags: {
     enablePredictiveAlerts: boolean;
     enableProviderMarketplace: boolean;
@@ -45,6 +60,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     jwtSecret: env.JWT_SECRET!,
     jwtExpiry: env.JWT_EXPIRY!,
     defaultCity: env.DEFAULT_CITY!,
+    serviceTypes: env.SERVICE_TYPES
+      ? env.SERVICE_TYPES.split(",").map((s) => s.trim()).filter(Boolean)
+      : [...DEFAULT_SERVICE_TYPES],
     flags: {
       enablePredictiveAlerts: parseBool(env.ENABLE_PREDICTIVE_ALERTS, "ENABLE_PREDICTIVE_ALERTS"),
       enableProviderMarketplace: parseBool(

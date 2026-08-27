@@ -1,6 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 2 complete; pushed to
+Last updated: 2026-08-26 (Increment 3 complete; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -14,9 +14,9 @@ reproducible timeline.
 | # | Increment | Status |
 |---|-----------|--------|
 | 1 | Project skeleton + config + evidence table | DONE |
-| 2 | Auth + member/provider principals | **DONE** (this hand-off) |
-| 3 | Request create + append-only events | **NEXT** |
-| 4 | Basic AI agent tool-calling loop | pending |
+| 2 | Auth + member/provider principals | DONE |
+| 3 | Request create + append-only events | **DONE** (this hand-off) |
+| 4 | Basic AI agent tool-calling loop | **NEXT** |
 | 5 | Matching interface (mock providers) | pending |
 | 6 | Redis presence + WS status | pending |
 | 7 | Stripe membership/incident skeleton | pending |
@@ -55,6 +55,31 @@ reproducible timeline.
 - Provider `verification_status` (pending/verified/rejected) is schema-only;
   verification vendor remains UNKNOWN_RFI.
 
+### Increment 3 decisions (requests + API)
+
+- Lifecycle state machine lives in ONE place: `TRANSITIONS` in
+  `src/requests/types.ts`, with per-transition actor-population policy in
+  `TRANSITION_ACTORS`. `triaged → resolved` is the deliberate remote/software
+  close (doctrine: software before metal). Denied transitions (illegal jump,
+  wrong population, non-owner member) emit `request.transition_denied`
+  evidence BEFORE throwing — hard rule 10 is now request-scoped.
+- Evidence before side effects, literally: `RequestService.create/transition`
+  append to the spine first, then write the `requests` projection row. The
+  projection self-heals from the creation event on idempotent replay (tested
+  by simulating a crash between the two writes).
+- Service catalog is config: `SERVICE_TYPES` env, defaulting to the canonical
+  categories (`DEFAULT_SERVICE_TYPES` in `src/common/config.ts`). Not an
+  enum, not a DB constraint — packaging per type is an open RFI.
+- HTTP surface is owned code over `node:http` (`src/api/server.ts`) — no
+  framework until a measured trigger. Member-only endpoints: signup, login,
+  create request (Idempotency-Key header required), get, timeline, cancel.
+  Cross-member access returns 404 (existence not leaked). Login failure is
+  identical for unknown email and wrong password. `npm run dev` serves it;
+  smoke-tested live against Postgres on 2026-08-26.
+- brain.md + agent/ configuration set added at repo root (session entry:
+  CLAUDE.md → brain.md → agent/* → this file). Pitlink-only content;
+  residue-scanned.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -70,24 +95,26 @@ reproducible timeline.
 - `JWT_SECRET` strength is not enforced (the `.env.example` placeholder
   "change-me" would be accepted). Add a production-startup strength check when
   an environment concept exists.
-- Auth denials are audited in-memory only until increment 3 wires them to a
-  persistent sink.
+- Request-scoped denials now land on the evidence spine
+  (`request.transition_denied`). HTTP-gate token denials (no request id yet)
+  still audit in-memory only; persist them when an ops surface needs them.
+- The API smoke test is manual (`npm run dev` + curl); the automated API
+  tests use in-memory stores. Wiring an automated end-to-end HTTP+Postgres
+  test is cheap if drift appears.
 - npm blocked esbuild's postinstall script during install
   (`npm approve-scripts` policy on this machine); vitest/tsx still work. If a
   future toolchain step fails on a missing esbuild binary, approve the script.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 3)
+## Next active task (Increment 4)
 
-Request create + append-only events: the Request bounded context (entity +
-lifecycle states from the canonical journey: created → triaged → matched →
-en_route → on_scene → resolved/closed, plus failure states), an HTTP surface
-(REST) that authenticates via `requirePrincipal("member")` and emits an
-evidence event BEFORE any side effect, and idempotency keys on the create
-path. Wire `AuthAuditSink` denials into evidence events where a request id
-exists. Service types (jump, tire, lockout, fuel/EV, tow) should be config or
-data, not enum-hard-coded, if pricing/packaging may vary per type
-(UNKNOWN_RFI). This increment is the heart of the Phase 0 exit criterion —
-after it, only mock matching (5) and a close path stand between us and a
-reproducible end-to-end timeline.
+Basic AI agent tool-calling loop: an owned LLM adapter interface (Contract
+Gate — no OpenAI SDK in domain code; LLM routing/model names are UNKNOWN_RFI,
+so the adapter is configured, never hard-coded), a conversational triage loop
+in `src/agents/` whose tools call `RequestService` (create on behalf of the
+authenticated member, transition to `triaged`, attempt the remote-resolution
+path first), and evidence events for agent actions (actor_type `system`).
+A deterministic/mock LLM adapter makes the loop fully testable without any
+vendor key. After this, increment 5 (mock matching) completes the Phase 0
+exit criterion path.

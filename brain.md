@@ -10,7 +10,7 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–2 complete, 3 in progress.
+- **Status:** Phase 0 — Foundation. Increments 1–3 complete, 4 next.
 
 ---
 
@@ -161,9 +161,10 @@ surfaces. Full rationale in the Technical Architecture Blueprint.
 
 ## 6. Current State (sync with `docs/HANDOFF.md` — that file is the detail)
 
-- Phase 0. Delivery Plan increments 1 (skeleton/config/evidence spine) and
-  2 (auth + isolated principals) are DONE, tested (23/23, incl. live Postgres
-  integration), and pushed to `main`.
+- Phase 0. Delivery Plan increments 1 (skeleton/config/evidence spine),
+  2 (auth + isolated principals), and 3 (request lifecycle + member REST API)
+  are DONE, tested (38/38 incl. live Postgres integration + live HTTP smoke),
+  and pushed to `main`. `npm run dev` serves the member journey.
 - Local stack: `docker compose up -d` (Postgres 16 + Redis 7), `npm run
   migrate`, `npm test`; integration tests auto-skip without `DATABASE_URL`.
 - Decisions already made (do not re-litigate): runtime Node+TS `[DECIDED]`;
@@ -204,3 +205,9 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   Pitlink, derived entirely from the three Pitlink canonical documents.
   Increments 1–2 complete and pushed; increment 3 (request lifecycle + REST
   surface) next.
+- **2026-08-26** — Increment 3 shipped: request lifecycle state machine with
+  per-transition actor policy and audited denials on the spine, evidence-first
+  create/transition with self-healing projection, config-driven service
+  catalog, owned node:http member API (signup/login/create/get/timeline/
+  cancel, 404-masked cross-member access). 38/38 tests incl. live Postgres;
+  live HTTP smoke passed. `brain.md` §6 and `docs/HANDOFF.md` updated.

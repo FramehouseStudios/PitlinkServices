@@ -9,6 +9,9 @@ import { PostgresEvidenceStore } from "./evidence/postgresStore.js";
 import { PostgresPrincipalStore } from "./auth/principalStore.js";
 import { DuplicateEmailError } from "./auth/principalStore.js";
 import type { NewEvidenceEvent } from "./evidence/types.js";
+import { PostgresRequestStore } from "../requests/store.js";
+import { RequestService } from "../requests/service.js";
+import { DEFAULT_SERVICE_TYPES } from "./config.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -61,6 +64,33 @@ describe.skipIf(!DATABASE_URL)("postgres integration", () => {
     await expect(
       pool.query("DELETE FROM evidence_events WHERE id = $1", [stored.id])
     ).rejects.toThrow(/append-only/);
+  });
+
+  it("request lifecycle end to end against real Postgres, timeline reproducible", async () => {
+    const service = new RequestService(
+      new PostgresEvidenceStore(pool),
+      new PostgresRequestStore(pool),
+      DEFAULT_SERVICE_TYPES
+    );
+    const member = { type: "member" as const, id: randomUUID() };
+    const request = await service.create(
+      member,
+      { serviceType: "jump_start", city: "los-angeles", lat: 34.05, lng: -118.24 },
+      `it-${randomUUID()}`
+    );
+    await service.transition({ type: "system", id: "matching" }, request.id, "triaged", "t1");
+    await service.transition({ type: "system", id: "agent" }, request.id, "resolved", "t2");
+    const closed = await service.transition({ type: "ops", id: randomUUID() }, request.id, "closed", "t3");
+    expect(closed.status).toBe("closed");
+
+    const timeline = await service.timeline(request.id);
+    expect(timeline.map((e) => e.eventType)).toEqual([
+      "request.created",
+      "request.triaged",
+      "request.resolved",
+      "request.closed",
+    ]);
+    expect((await service.get(request.id))?.status).toBe("closed");
   });
 
   it("principal stores: isolated populations, duplicate email rejected per table", async () => {

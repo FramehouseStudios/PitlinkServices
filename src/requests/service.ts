@@ -1,0 +1,178 @@
+// Request lifecycle service. The one rule that shapes every method: the
+// evidence event is appended BEFORE the read-model side effect. If we crash
+// in between, the spine is right and the projection heals on the next read.
+import { randomUUID } from "node:crypto";
+import type { EvidenceStore } from "../common/evidence/store.js";
+import type { ActorType, EvidenceEvent } from "../common/evidence/types.js";
+import { CALCULATION_RULES_VERSION } from "../common/evidence/rules.js";
+import type { RequestStore } from "./store.js";
+import {
+  IllegalTransitionError,
+  RequestNotFoundError,
+  RequestValidationError,
+  TRANSITIONS,
+  TRANSITION_ACTORS,
+  type RequestRecord,
+  type RequestStatus,
+} from "./types.js";
+
+export interface Actor {
+  type: ActorType;
+  id: string;
+}
+
+export interface CreateRequestInput {
+  serviceType: string;
+  city: string;
+  lat: number;
+  lng: number;
+}
+
+export class RequestService {
+  constructor(
+    private readonly evidence: EvidenceStore,
+    private readonly requests: RequestStore,
+    private readonly serviceTypes: readonly string[]
+  ) {}
+
+  async create(
+    actor: Actor,
+    input: CreateRequestInput,
+    idempotencyKey: string,
+    now: Date = new Date()
+  ): Promise<RequestRecord> {
+    if (actor.type !== "member") {
+      throw new IllegalTransitionError("created", "created", "wrong_actor_population");
+    }
+    if (!this.serviceTypes.includes(input.serviceType)) {
+      throw new RequestValidationError(
+        `unknown serviceType ${JSON.stringify(input.serviceType)}; known: ${this.serviceTypes.join(", ")}`
+      );
+    }
+    if (!input.city.trim()) throw new RequestValidationError("city must be non-empty");
+    if (!Number.isFinite(input.lat) || input.lat < -90 || input.lat > 90) {
+      throw new RequestValidationError("lat out of range");
+    }
+    if (!Number.isFinite(input.lng) || input.lng < -180 || input.lng > 180) {
+      throw new RequestValidationError("lng out of range");
+    }
+    if (!idempotencyKey.trim()) throw new RequestValidationError("idempotencyKey required");
+
+    const requestId = randomUUID();
+    const event = await this.evidence.append({
+      requestId,
+      eventType: "request.created",
+      payload: { serviceType: input.serviceType, city: input.city, lat: input.lat, lng: input.lng },
+      actorType: actor.type,
+      actorId: actor.id,
+      calculationRulesVersion: CALCULATION_RULES_VERSION,
+      idempotencyKey: `request.create:${idempotencyKey}`,
+      occurredAt: now,
+    });
+
+    // Replay: the spine already holds a creation under this key — return that
+    // request, healing the projection from the event if the row is missing.
+    const canonicalId = event.requestId;
+    if (canonicalId !== requestId) return this.heal(canonicalId, event, actor.id);
+
+    const record: RequestRecord = {
+      id: requestId,
+      memberId: actor.id,
+      serviceType: input.serviceType,
+      city: input.city,
+      lat: input.lat,
+      lng: input.lng,
+      status: "created",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.requests.insert(record);
+    return record;
+  }
+
+  async transition(
+    actor: Actor,
+    requestId: string,
+    to: RequestStatus,
+    idempotencyKey: string,
+    now: Date = new Date()
+  ): Promise<RequestRecord> {
+    const record = await this.requests.findById(requestId);
+    if (!record) throw new RequestNotFoundError(requestId);
+    if (record.status === to) return record; // idempotent no-op
+
+    const from = record.status;
+    const deny = async (reason: "illegal_transition" | "wrong_actor_population") => {
+      // Hard rule 10: privileged-write denials are audited — on the spine,
+      // request-scoped, before the error surfaces.
+      await this.evidence.append({
+        requestId,
+        eventType: "request.transition_denied",
+        payload: { from, to, reason },
+        actorType: actor.type,
+        actorId: actor.id,
+        calculationRulesVersion: CALCULATION_RULES_VERSION,
+        idempotencyKey: `request.denied:${randomUUID()}`,
+        occurredAt: now,
+      });
+      throw new IllegalTransitionError(from, to, reason);
+    };
+
+    if (!TRANSITIONS[from].includes(to)) await deny("illegal_transition");
+    if (!TRANSITION_ACTORS[to].includes(actor.type)) await deny("wrong_actor_population");
+    // A member may only act on their own request.
+    if (actor.type === "member" && actor.id !== record.memberId) await deny("wrong_actor_population");
+
+    const nonce = randomUUID();
+    const event = await this.evidence.append({
+      requestId,
+      eventType: `request.${to}`,
+      payload: { from, nonce },
+      actorType: actor.type,
+      actorId: actor.id,
+      calculationRulesVersion: CALCULATION_RULES_VERSION,
+      idempotencyKey: `request.transition:${to}:${idempotencyKey}`,
+      occurredAt: now,
+    });
+    if ((event.payload as { nonce?: string }).nonce !== nonce) {
+      // Replay of an earlier successful transition under the same key.
+      return (await this.requests.findById(requestId))!;
+    }
+
+    const updated = await this.requests.setStatus(requestId, from, to, now);
+    if (!updated) {
+      const current = await this.requests.findById(requestId);
+      if (current?.status === to) return current; // lost a benign race
+      throw new IllegalTransitionError(current?.status ?? from, to, "illegal_transition");
+    }
+    return { ...record, status: to, updatedAt: now };
+  }
+
+  async get(requestId: string): Promise<RequestRecord | null> {
+    return this.requests.findById(requestId);
+  }
+
+  async timeline(requestId: string): Promise<EvidenceEvent[]> {
+    return this.evidence.timeline(requestId);
+  }
+
+  /** Rebuild a missing projection row from its creation event. */
+  private async heal(id: string, event: EvidenceEvent, memberId: string): Promise<RequestRecord> {
+    const existing = await this.requests.findById(id);
+    if (existing) return existing;
+    const p = event.payload as { serviceType: string; city: string; lat: number; lng: number };
+    const record: RequestRecord = {
+      id,
+      memberId,
+      serviceType: p.serviceType,
+      city: p.city,
+      lat: p.lat,
+      lng: p.lng,
+      status: "created",
+      createdAt: event.occurredAt,
+      updatedAt: event.occurredAt,
+    };
+    await this.requests.insert(record);
+    return record;
+  }
+}
