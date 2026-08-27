@@ -270,6 +270,12 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-27** — Provider web surface shipped (one file, served at
+  /provider): go online, work the assigned job, and see your own standing
+  including suppression reasons verbatim (fairness: no hidden scores).
+  REAL BUG FIXED: providers could be double-booked (reliability rescue onto
+  a busy provider) — matching now excludes providers holding an active job,
+  spine-derived. Full job driven through the UI live. 110/110 tests.
 - **2026-08-26** — Provider quality gating shipped: reputation derived from
   the spine (no-show rate, ratings, completions) suppresses unreliable
   providers in matching — but only above a real sample floor, and never at

@@ -31,6 +31,8 @@ export interface ApiDeps {
   serviceTypes?: readonly string[];
   /** Absolute path to the member web app HTML; GET / serves it when set. */
   webAppPath?: string;
+  /** Absolute path to the provider web app HTML; GET /provider serves it. */
+  providerAppPath?: string;
   members: PrincipalStore;
   providers: PrincipalStore;
   /** Ops principals are seeded by script (scripts/seed-ops.ts), NEVER
@@ -62,6 +64,15 @@ async function readWebApp(path: string): Promise<string> {
     webAppCache = await readFile(path, "utf8");
   }
   return webAppCache;
+}
+
+let providerAppCache: string | null = null;
+async function readProviderApp(path: string): Promise<string> {
+  if (providerAppCache === null) {
+    const { readFile } = await import("node:fs/promises");
+    providerAppCache = await readFile(path, "utf8");
+  }
+  return providerAppCache;
 }
 
 class HttpError extends Error {
@@ -171,6 +182,11 @@ export function createApi(deps: ApiDeps): Server {
       return [200, { __raw: html, contentType: "text/html; charset=utf-8" }];
     }
 
+    if (route === "GET /provider" && deps.providerAppPath) {
+      const html = await readProviderApp(deps.providerAppPath);
+      return [200, { __raw: html, contentType: "text/html; charset=utf-8" }];
+    }
+
     if (route === "GET /catalog") {
       // Public, non-sensitive: what a client needs to render the request form.
       return [200, { serviceTypes: deps.serviceTypes ?? [], defaultCity: deps.defaultCity }];
@@ -260,6 +276,42 @@ export function createApi(deps: ApiDeps): Server {
         deps.presenceTtlSeconds ?? 60
       );
       return [200, { ok: true, ttlSeconds: deps.presenceTtlSeconds ?? 60 }];
+    }
+
+    if (route === "GET /providers/me") {
+      const provider = providerClaims(req);
+      // Fairness: a provider sees exactly the standing ops sees, including
+      // why they are suppressed. No hidden scores.
+      let standing = null;
+      if (deps.reputation) {
+        await deps.reputation.refreshIfStale();
+        standing =
+          deps.reputation.list().find((p) => p.providerId === provider.sub) ?? {
+            providerId: provider.sub,
+            accepted: 0,
+            noShows: 0,
+            completed: 0,
+            noShowRate: 0,
+            ratingCount: 0,
+            avgRating: null,
+            suppressed: false,
+            suppressionReasons: [],
+          };
+      }
+      return [200, { providerId: provider.sub, standing }];
+    }
+
+    if (route === "GET /providers/jobs/current") {
+      const provider = providerClaims(req);
+      const active = await deps.requests.listByStatus(["matched", "en_route", "on_scene"], 200);
+      // Newest first: a provider holds one job, but never let a stale row
+      // mask the live one.
+      const mine = [];
+      for (const record of active) {
+        if ((await deps.requests.assignedProvider(record.id)) === provider.sub) mine.push(record);
+      }
+      mine.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return [200, { job: mine[0] ?? null }];
     }
 
     const journeyMatch = /^POST \/requests\/([0-9a-f-]{36})\/(en_route|on_scene|resolved)$/.exec(route);

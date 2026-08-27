@@ -113,6 +113,7 @@ const api = createApi({
   defaultCity: config.defaultCity,
   serviceTypes: config.serviceTypes,
   webAppPath: fileURLToPath(new URL("../public/index.html", import.meta.url)),
+  providerAppPath: fileURLToPath(new URL("../public/provider.html", import.meta.url)),
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
   ops: new PostgresPrincipalStore(pool, "ops"),

@@ -147,3 +147,34 @@ describe("reputation service caching", () => {
     expect(service.isSuppressed("anyone")).toBe(false);
   });
 });
+
+describe("one job at a time", () => {
+  it("SAFETY: a provider already on an active job is not dispatched a second one", async () => {
+    const evidence = new InMemoryEvidenceStore();
+    const requests = new RequestService(evidence, new InMemoryRequestStore(), DEFAULT_SERVICE_TYPES);
+    const engine = new MatchingEngine(
+      new MockProviderDirectory([provider("solo", 34.0501)]),
+      requests,
+      evidence,
+      { marketplaceEnabled: true }
+    );
+    const mk = async (key: string) => {
+      const r = await requests.create(MEMBER, { serviceType: "tow", city: "los-angeles", lat: 34.05, lng: -118.24 }, key, t(0));
+      await requests.transition({ type: "system", id: "s" }, r.id, "triaged", `t-${key}`, t(1));
+      return r;
+    };
+    const first = await mk("j1");
+    expect(await engine.match(first.id, "m1", t(2))).toMatchObject({ matched: true, providerId: "solo" });
+
+    // Second member, same lone provider — must NOT be double-booked.
+    const second = await mk("j2");
+    expect(await engine.match(second.id, "m2", t(3))).toEqual({ matched: false, reason: "no_providers" });
+    expect(await requests.assignedProvider(second.id)).toBeNull();
+
+    // Once the first job resolves, the provider is dispatchable again.
+    await requests.transition({ type: "provider", id: "solo" }, first.id, "en_route", "e", t(4));
+    await requests.transition({ type: "provider", id: "solo" }, first.id, "on_scene", "o", t(5));
+    await requests.transition({ type: "provider", id: "solo" }, first.id, "resolved", "r", t(6));
+    expect(await engine.match(second.id, "m3", t(7))).toMatchObject({ matched: true, providerId: "solo" });
+  });
+});

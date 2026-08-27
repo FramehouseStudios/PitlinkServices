@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Provider quality gating on top of the service
-reliability layer; verified live against real spine data; pushed to
+Last updated: 2026-08-27 (Provider web surface + self-standing; fixed a real
+double-booking bug; full job driven through the UI in a browser; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -31,7 +31,8 @@ reproducible timeline.
 | — | Ops read surface (backlog 3) | DONE |
 | — | Member web surface (backlog 4) | DONE |
 | — | **Service reliability layer** (Blueprint §9 controls) | DONE |
-| — | **Provider quality gating** | **DONE** (this hand-off) |
+| — | **Provider quality gating** | DONE |
+| — | **Provider web surface + self-standing** | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -377,6 +378,39 @@ named reasons.
   flipped to suppressed with the reason `no_show_rate 1.00 > 0.5` attached,
   while the reliable provider was untouched.
 
+### Provider web surface + one-job-at-a-time (2026-08-27)
+
+- `public/provider.html` (served at `GET /provider`): same one-file, no-build
+  discipline as the member app. Sign in, set location, go online (heartbeat
+  every 30s while online), see the assigned job with ONE obvious next action
+  (Start driving → I've arrived → Mark resolved), and see your own standing.
+  Polls every 5s. Going en_route also pushes a location ping so the member
+  sees movement immediately.
+- `GET /providers/me` — **fairness rule:** a provider sees exactly the
+  standing ops sees, including the suppression reasons verbatim. No hidden
+  scores. A suppressed provider is told plainly that they are being passed
+  over, why, and that it lifts as their record improves.
+- `GET /providers/jobs/current` — the provider's active job (assignment
+  resolved from the spine), newest first so a stale row can never mask the
+  live one.
+- **REAL BUG FOUND AND FIXED during live testing: double-booking.** The
+  reliability sweep rescued an old stranded request onto a provider who
+  already had a job, leaving them holding two at once — in the field that
+  strands whichever member they don't drive to. `RequestService
+  .busyProviders()` now derives active assignments from the spine and the
+  matching engine excludes them: **a provider can hold exactly one active
+  job.** Regression-tested (second member gets `no_providers` rather than a
+  double-booked truck, and the provider becomes dispatchable again the
+  moment the first job resolves).
+- Verified live end to end in a browser: provider signed up, went online,
+  received a member's tire-change automatically, and drove it through
+  en_route → on_scene → resolved with the CTA advancing correctly at each
+  step. Spine shows the full trail incl. the automatic location_update;
+  standing updated to completed=1 after the reputation TTL.
+- Provider standing is stale by at most 60s (reputation TTL) — deliberate:
+  these are historical counts, not live state, and refreshing per poll would
+  scan every recent timeline.
+
 ## THE UNGATED BUILD IS COMPLETE
 
 Everything buildable without founder decisions now exists and is verified:
@@ -426,8 +460,7 @@ order:
 1. Proactive member communication: push ETA and recovery events into a
    channel the member sees when the page is closed — NEEDS the voice/SMS
    provider RFI. In-page is done.
-2. Provider-facing web surface (heartbeat + job view), so a real provider
-   can work without curl. Ungated.
-3. Deploy target selection + JWT secret strength check. Ungated.
-4. Provider standing visible TO the provider (fairness: someone suppressed
-   should know why, from the same numbers ops sees).
+2. Deploy target selection + JWT secret strength check. Ungated.
+3. Multi-instance readiness: the reliability sweep and event bus are
+   in-process; a second instance needs leader election or a worker split
+   (measured trigger, not yet).

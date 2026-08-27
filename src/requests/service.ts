@@ -231,6 +231,21 @@ export class RequestService {
     return this.requests.listByStatus(statuses, limit);
   }
 
+  /**
+   * Providers currently holding an active job. A provider can work exactly
+   * ONE request at a time — dispatching a second would strand whichever
+   * member they don't drive to.
+   */
+  async busyProviders(limit = 500): Promise<Set<string>> {
+    const active = await this.requests.listByStatus(["matched", "en_route", "on_scene"], limit);
+    const busy = new Set<string>();
+    for (const record of active) {
+      const providerId = await this.assignedProvider(record.id);
+      if (providerId) busy.add(providerId);
+    }
+    return busy;
+  }
+
   async timeline(requestId: string): Promise<EvidenceEvent[]> {
     return this.evidence.timeline(requestId);
   }

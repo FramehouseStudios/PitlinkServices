@@ -12,6 +12,7 @@ import { InMemoryProviderPresence } from "../realtime/presence.js";
 import { PresenceProviderDirectory } from "../realtime/directory.js";
 import { TrackingService } from "../realtime/tracking.js";
 import { InMemoryVehicleStore } from "../members/vehicles.js";
+import { ReputationService } from "../reliability/reputation.js";
 import { createApi } from "./server.js";
 import { signToken } from "../common/auth/token.js";
 
@@ -23,6 +24,7 @@ let requests: RequestService;
 let engine: MatchingEngine;
 let healthy = { postgres: true };
 let requestStore: InMemoryRequestStore;
+let reputationService: ReputationService;
 const opsStore = new InMemoryPrincipalStore("ops");
 
 beforeAll(async () => {
@@ -30,6 +32,7 @@ beforeAll(async () => {
   const evidence = new InMemoryEvidenceStore();
   requestStore = new InMemoryRequestStore();
   requests = new RequestService(evidence, requestStore, DEFAULT_SERVICE_TYPES);
+  reputationService = new ReputationService(requests);
   const presence = new InMemoryProviderPresence();
   engine = new MatchingEngine(new PresenceProviderDirectory(presence), requests, evidence, {
     marketplaceEnabled: true,
@@ -40,6 +43,8 @@ beforeAll(async () => {
     defaultCity: "los-angeles",
     serviceTypes: DEFAULT_SERVICE_TYPES,
     webAppPath: fileURLToPath(new URL("../../public/index.html", import.meta.url)),
+    providerAppPath: fileURLToPath(new URL("../../public/provider.html", import.meta.url)),
+    reputation: reputationService,
     members: new InMemoryPrincipalStore("member"),
     providers: new InMemoryPrincipalStore("provider"),
     ops: opsStore,
@@ -360,6 +365,69 @@ describe("member API", () => {
     expect(catalog.status).toBe(200);
     expect(catalog.json.serviceTypes).toContain("jump_start");
     expect(catalog.json.defaultCity).toBe("los-angeles");
+  });
+
+  it("provider surface: serves the app, exposes own standing, and finds the current job", async () => {
+    const page = await fetch(`${base}/provider`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Pitlink Provider");
+
+    const pro = await call("POST", "/providers/signup", {
+      body: { email: "surface-pro@example.com", password: "correct-horse" },
+    });
+    const providerToken = pro.json.token as string;
+    const providerId = pro.json.provider.id as string;
+
+    // A brand-new provider sees a clean, zeroed standing — never suppressed.
+    const me = await call("GET", "/providers/me", { token: providerToken });
+    expect(me.status).toBe(200);
+    expect(me.json.standing).toMatchObject({ accepted: 0, noShows: 0, suppressed: false });
+
+    // No job yet.
+    expect((await call("GET", "/providers/jobs/current", { token: providerToken })).json.job).toBeNull();
+
+    // Assign one through the real flow, then it appears.
+    await call("POST", "/providers/heartbeat", {
+      token: providerToken,
+      body: { lat: 34.0501, lng: -118.2401, serviceTypes: ["tow"] },
+    });
+    const memberToken = await signup("surface-member@example.com");
+    const created = await call("POST", "/requests", {
+      token: memberToken,
+      key: "ps-1",
+      body: { serviceType: "tow", lat: 34.05, lng: -118.24 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "ps-t");
+    expect((await engine.match(id, "ps-m")).matched).toBe(true);
+
+    const current = await call("GET", "/providers/jobs/current", { token: providerToken });
+    expect(current.json.job).toMatchObject({ id, status: "matched", serviceType: "tow" });
+    void providerId;
+  });
+
+  it("adversarial: member tokens cannot read provider standing or jobs", async () => {
+    const memberToken = await signup("nosy-standing@example.com");
+    expect((await call("GET", "/providers/me", { token: memberToken })).status).toBe(401);
+    expect((await call("GET", "/providers/jobs/current", { token: memberToken })).status).toBe(401);
+  });
+
+  it("adversarial: a provider sees only their OWN current job, never another provider's", async () => {
+    const a = await call("POST", "/providers/signup", { body: { email: "own-a@example.com", password: "correct-horse" } });
+    const b = await call("POST", "/providers/signup", { body: { email: "own-b@example.com", password: "correct-horse" } });
+    await call("POST", "/providers/heartbeat", {
+      token: a.json.token,
+      body: { lat: 34.0501, lng: -118.2401, serviceTypes: ["lockout"] },
+    });
+    const memberToken = await signup("own-member@example.com");
+    const created = await call("POST", "/requests", {
+      token: memberToken, key: "own-1", body: { serviceType: "lockout", lat: 34.05, lng: -118.24 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "own-t");
+    await engine.match(id, "own-m");
+    expect((await call("GET", "/providers/jobs/current", { token: a.json.token })).json.job).toMatchObject({ id });
+    expect((await call("GET", "/providers/jobs/current", { token: b.json.token })).json.job).toBeNull();
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

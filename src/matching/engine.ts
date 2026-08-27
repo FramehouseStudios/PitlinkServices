@@ -50,8 +50,11 @@ export class MatchingEngine {
     // are never offered it again — a member must not wait on the same truck
     // twice.
     const excluded = await this.previouslyTried(requestId);
+    // One job at a time: a provider already on an active request is not
+    // dispatchable, whatever presence claims.
+    const busy = await this.requests.busyProviders();
     const available = (await this.directory.findCandidates(request.serviceType, request.city)).filter(
-      (p) => !excluded.has(p.id)
+      (p) => !excluded.has(p.id) && !busy.has(p.id)
     );
     // Quality gate, applied as a preference: prefer providers in good
     // standing, but never leave a member stranded to enforce it.
