@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pitlink</title>
+<style>
+  :root { --ink: #111; --muted: #737373; --line: #e5e5e5; --accent: #0a7d33; --bg: #fff; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+    display: flex; justify-content: center; min-height: 100vh; padding: 24px 16px;
+  }
+  main { width: 100%; max-width: 420px; }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .tag { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+  section { display: none; }
+  section.on { display: block; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 4px; }
+  input, select {
+    width: 100%; padding: 12px; font-size: 16px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink);
+  }
+  button {
+    width: 100%; padding: 14px; margin-top: 20px; font-size: 16px; font-weight: 600;
+    border: 0; border-radius: 8px; background: var(--ink); color: #fff; cursor: pointer;
+  }
+  button.quiet { background: transparent; color: var(--muted); font-weight: 400; padding: 10px; margin-top: 4px; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .err { color: #b3261e; font-size: 14px; margin-top: 12px; min-height: 20px; }
+  .status { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 8px 0 4px; text-transform: capitalize; }
+  .eta { color: var(--accent); font-weight: 600; font-size: 15px; min-height: 22px; }
+  ol { list-style: none; margin-top: 24px; border-top: 1px solid var(--line); }
+  ol li { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; display: flex; justify-content: space-between; gap: 12px; }
+  ol li time { color: var(--muted); white-space: nowrap; }
+  .loc { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  .loc input { flex: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pitlink</h1>
+  <p class="tag">Being stranded, solved.</p>
+
+  <section id="auth" class="on">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="email">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button id="signin">Sign in</button>
+    <button id="signupBtn" class="quiet">New here? Create an account</button>
+    <p class="err" id="authErr"></p>
+  </section>
+
+  <section id="request">
+    <label for="service">What happened?</label>
+    <select id="service"></select>
+    <label>Where are you?</label>
+    <div class="loc">
+      <input id="lat" type="number" step="any" placeholder="latitude">
+      <input id="lng" type="number" step="any" placeholder="longitude">
+    </div>
+    <button id="locate" class="quiet">Use my location</button>
+    <button id="go">Get help</button>
+    <button id="logout" class="quiet">Sign out</button>
+    <p class="err" id="reqErr"></p>
+  </section>
+
+  <section id="track">
+    <p class="tag" id="trackService"></p>
+    <p class="status" id="trackStatus">…</p>
+    <p class="eta" id="trackEta"></p>
+    <ol id="timeline"></ol>
+    <button id="cancel">Cancel request</button>
+    <button id="newReq" class="quiet">New request</button>
+    <p class="err" id="trackErr"></p>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => { for (const s of document.querySelectorAll("section")) s.classList.remove("on"); $(id).classList.add("on"); };
+  let token = null, requestId = null, socket = null;
+  try { token = localStorage.getItem("pitlink_token"); } catch {}
+
+  const api = async (method, path, body, key) => {
+    const res = await fetch(path, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: "Bearer " + token } : {}),
+        ...(key ? { "idempotency-key": key } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ("error " + res.status));
+    return json;
+  };
+
+  const loadCatalog = async () => {
+    const catalog = await api("GET", "/catalog");
+    $("service").innerHTML = catalog.serviceTypes
+      .map((s) => `<option value="${s}">${s.replaceAll("_", " ")}</option>`)
+      .join("");
+  };
+
+  const auth = async (path) => {
+    $("authErr").textContent = "";
+    try {
+      const result = await api("POST", path, { email: $("email").value, password: $("password").value });
+      token = result.token;
+      try { localStorage.setItem("pitlink_token", token); } catch {}
+      await loadCatalog();
+      show("request");
+    } catch (err) { $("authErr").textContent = err.message; }
+  };
+  $("signin").onclick = () => auth("/members/login");
+  $("signupBtn").onclick = () => auth("/members/signup");
+  $("logout").onclick = () => { token = null; try { localStorage.removeItem("pitlink_token"); } catch {} show("auth"); };
+
+  $("locate").onclick = () => navigator.geolocation?.getCurrentPosition(
+    (pos) => { $("lat").value = pos.coords.latitude; $("lng").value = pos.coords.longitude; },
+    () => { $("reqErr").textContent = "Location unavailable — enter it manually."; }
+  );
+
+  const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const labels = {
+    "request.created": "Request received",
+    "request.triaged": "Diagnosed",
+    "provider.offered": "Finding help nearby",
+    "provider.accepted": "Help confirmed",
+    "request.matched": "Matched",
+    "request.en_route": "On the way",
+    "request.location_update": "Moving…",
+    "request.on_scene": "Arrived",
+    "request.resolved": "Resolved",
+    "request.closed": "Closed",
+    "request.cancelled": "Cancelled",
+  };
+
+  const renderEvent = (event) => {
+    if (event.eventType === "request.location_update") {
+      $("trackEta").textContent = "About " + Math.max(1, Math.round(event.payload.etaMinutes)) + " min away";
+      return;
+    }
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${labels[event.eventType] || event.eventType}</span><time>${fmtTime(event.occurredAt)}</time>`;
+    $("timeline").prepend(li);
+    const status = event.eventType.replace("request.", "");
+    if (["created","triaged","matched","en_route","on_scene","resolved","closed","cancelled"].includes(status)) {
+      $("trackStatus").textContent = status.replaceAll("_", " ");
+      if (["resolved", "closed", "cancelled"].includes(status)) { $("cancel").style.display = "none"; $("trackEta").textContent = ""; }
+    }
+  };
+
+  const track = (record) => {
+    requestId = record.id;
+    $("timeline").innerHTML = "";
+    $("trackEta").textContent = "";
+    $("cancel").style.display = "";
+    $("trackService").textContent = record.serviceType.replaceAll("_", " ") + " · " + record.city;
+    $("trackStatus").textContent = record.status;
+    show("track");
+    socket?.close();
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&requestId=${requestId}`);
+    socket.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.type === "snapshot") data.events.forEach(renderEvent);
+      else if (data.type === "event") renderEvent(data.event);
+    };
+  };
+
+  $("go").onclick = async () => {
+    $("reqErr").textContent = "";
+    if ($("lat").value.trim() === "" || $("lng").value.trim() === "") {
+      $("reqErr").textContent = "We need your location to send help.";
+      return;
+    }
+    try {
+      const record = await api("POST", "/requests", {
+        serviceType: $("service").value,
+        lat: Number($("lat").value),
+        lng: Number($("lng").value),
+      }, crypto.randomUUID());
+      track(record);
+    } catch (err) { $("reqErr").textContent = err.message; }
+  };
+
+  $("cancel").onclick = async () => {
+    $("trackErr").textContent = "";
+    try { await api("POST", `/requests/${requestId}/cancel`, undefined, crypto.randomUUID()); }
+    catch (err) { $("trackErr").textContent = err.message; }
+  };
+  $("newReq").onclick = () => { socket?.close(); show("request"); };
+
+  if (token) loadCatalog().then(() => show("request")).catch(() => show("auth"));
+})();
+</script>
+</body>
+</html>

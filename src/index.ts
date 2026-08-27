@@ -2,6 +2,7 @@
 // HTTP surface, and the WebSocket status stream.
 // Run the local stack first: docker compose up -d && npm run migrate
 import pg from "pg";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./common/config.js";
 import { InMemoryAuthAuditSink } from "./common/auth/guard.js";
 import { PostgresPrincipalStore } from "./common/auth/principalStore.js";
@@ -28,7 +29,22 @@ const requests = new RequestService(
   evidence,
   new PostgresRequestStore(pool),
   config.serviceTypes,
-  (event) => bus.publish(event)
+  (event) => {
+    bus.publish(event);
+    // Phase 0 orchestration: a new request is auto-triaged and matched
+    // in-process (the conversational agent takes over triage once LLM
+    // routing is decided). A failed match stays measurable on the spine.
+    if (event.eventType === "request.created") {
+      setImmediate(async () => {
+        try {
+          await requests.transition({ type: "system", id: "auto-triage" }, event.requestId, "triaged", `auto:${event.requestId}`);
+          await matching.match(event.requestId, `auto:${event.requestId}`);
+        } catch (err) {
+          logger.error("auto-flow failed", { requestId: event.requestId, detail: (err as Error).message });
+        }
+      });
+    }
+  }
 );
 
 const presence = await RedisProviderPresence.connect(config.redisUrl);
@@ -45,6 +61,8 @@ const api = createApi({
   jwtSecret: config.jwtSecret,
   jwtExpiry: config.jwtExpiry,
   defaultCity: config.defaultCity,
+  serviceTypes: config.serviceTypes,
+  webAppPath: fileURLToPath(new URL("../public/index.html", import.meta.url)),
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
   ops: new PostgresPrincipalStore(pool, "ops"),

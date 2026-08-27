@@ -1,6 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Ops read surface complete; pushed to
+Last updated: 2026-08-26 (Member web surface complete — full journey verified
+live in a browser; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -27,7 +28,8 @@ reproducible timeline.
 | — | Provider API surface (beyond plan) | DONE |
 | — | Vehicles bounded context (backlog 1) | **DONE** (this hand-off) |
 | — | Post-resolution feedback (backlog 2) | DONE |
-| — | Ops read surface (backlog 3) | **DONE** (this hand-off) |
+| — | Ops read surface (backlog 3) | DONE |
+| — | Member web surface (backlog 4) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -277,6 +279,42 @@ reproducible timeline.
   in the local DB, all reconciling consistent) → health 200.
 - `RequestStore.listRecent(limit)` added (newest first) for ops reads.
 
+### Member web surface decisions (backlog 4)
+
+- One static file (`public/index.html`), zero frameworks, zero build step,
+  served by the monolith at GET /. Inline CSS/JS, system font, black on
+  white, one accent color. Three panels: auth (login/signup), request
+  (service select from GET /catalog + location with geolocation button),
+  live tracking (WS snapshot + live events, human-readable labels,
+  ETA line from location_update pushes, cancel until terminal).
+- `GET /catalog` (public, non-sensitive): serviceTypes + defaultCity, so
+  the client renders the form without hardcoding the catalog.
+- **Phase 0 orchestration in the entrypoint** (`src/index.ts`): on
+  `request.created`, the server auto-triages (system `auto-triage`) and
+  attempts a match in-process. This is deliberate: WS push is in-process by
+  design, and the conversational agent takes over triage once LLM routing
+  is decided — the auto-flow is its stand-in, not a replacement.
+- Verified LIVE in a real browser: signup → guard against missing location
+  → request created → timeline streamed created/triaged/offered/accepted/
+  matched instantly → provider (via HTTP API) drove en_route/ping (ETA
+  pushed to the page)/on_scene/resolved — all rendered in real time.
+  ~18s request→resolution in the demo run.
+- Client token in localStorage [ASSUMPTION — acceptable Phase 0; revisit
+  with a security pass before real members].
+- Repo path contains a space: use `fileURLToPath(new URL(...))`, never
+  `new URL(...).pathname` (bit us — %20).
+
+## THE UNGATED BUILD IS COMPLETE
+
+Everything buildable without founder decisions now exists and is verified:
+evidence spine, isolated principals ×3, request lifecycle, AI agent loop
+(scripted adapter), matching, presence, WS tracking, payments skeleton,
+tracking+ETA, versioned metrics, reconciliation, observability, provider
+API, vehicles, feedback, ops reads, member web app. What remains needs the
+founder: pricing + Stripe keys (increment 12), live providers in
+DEFAULT_CITY (increment 8), LLM routing (real agent), voice provider,
+verification vendor, density targets.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -310,10 +348,6 @@ The Delivery Plan's ungated increments are COMPLETE (1–7, 9–11 + provider
 surface). Remaining gates: 8 (live providers — Phase 1 physical work),
 12 (first paid path — founder pricing + Stripe keys [ABSOLUTELY-HUMAN]).
 
-Highest-leverage ungated backlog:
-1. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
-   minimal UI: one screen to request help (signup/login folded in), one live
-   tracking view fed by the WS surface. Serve as static assets from the
-   monolith (no separate frontend deployable — smallest system). After that,
-   the ungated build is genuinely done and the next moves are the founder
-   gates: pricing + Stripe keys (12) and live providers in DEFAULT_CITY (8).
+With the ungated build complete, next work is founder-gated (see above) or
+polish: deploy target selection, JWT secret strength check, provider web
+surface (heartbeat UI), member feedback UI on the tracking view.

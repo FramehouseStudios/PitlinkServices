@@ -10,12 +10,13 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. ALL ungated Delivery Plan increments
-  complete (1–7, 9–11 + provider HTTP surface). Gated: 8 (live providers —
-  Phase 1), 12 (first paid path — founder pricing + Stripe keys). The Phase 0
-  exit criterion passes as an executable test (`src/phase0.exit.test.ts`).
-  Next: backlog in `docs/HANDOFF.md` (ops metrics endpoint, member web
-  surface). Vehicles + post-resolution feedback shipped 2026-08-26.
+- **Status:** Phase 0 — Foundation. **THE UNGATED BUILD IS COMPLETE**: all
+  non-gated Delivery Plan increments plus provider HTTP surface, vehicles,
+  feedback, ops reads, and the member web app (full journey verified live
+  in a browser over WS). The Phase 0 exit criterion passes as an executable
+  test (`src/phase0.exit.test.ts`). Remaining work is founder-gated:
+  pricing + Stripe keys (12), live providers (8), LLM routing, voice
+  provider, verification vendor, density targets.
 
 ---
 
@@ -269,3 +270,10 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-26** — Member web surface shipped; THE UNGATED BUILD IS
+  COMPLETE. Single static file, no framework, served by the monolith;
+  GET /catalog; Phase 0 auto-triage+match orchestration in the entrypoint.
+  Verified live in a real browser: full journey streamed over WS
+  (created→…→resolved, ETA pushes included) in ~18s. 88/88 tests.
+  Remaining work is founder-gated (pricing/Stripe, live providers, LLM
+  routing, voice, verification vendor, density targets).

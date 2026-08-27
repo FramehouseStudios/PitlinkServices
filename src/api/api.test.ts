@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_SERVICE_TYPES } from "../common/config.js";
 import { InMemoryAuthAuditSink } from "../common/auth/guard.js";
 import { InMemoryPrincipalStore } from "../common/auth/principalStore.js";
@@ -37,6 +38,8 @@ beforeAll(async () => {
     jwtSecret: SECRET,
     jwtExpiry: "1h",
     defaultCity: "los-angeles",
+    serviceTypes: DEFAULT_SERVICE_TYPES,
+    webAppPath: fileURLToPath(new URL("../../public/index.html", import.meta.url)),
     members: new InMemoryPrincipalStore("member"),
     providers: new InMemoryPrincipalStore("provider"),
     ops: opsStore,
@@ -345,6 +348,18 @@ describe("member API", () => {
       { requestId: id, discrepancy: "status_drift", spineStatus: "resolved", projectionStatus: "created" },
     ]);
     internals.byId.get(id)!.status = "resolved"; // restore
+  });
+
+  it("serves the web app and the public catalog", async () => {
+    const page = await fetch(`${base}/`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toContain("Pitlink");
+
+    const catalog = await call("GET", "/catalog");
+    expect(catalog.status).toBe(200);
+    expect(catalog.json.serviceTypes).toContain("jump_start");
+    expect(catalog.json.defaultCity).toBe("los-angeles");
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

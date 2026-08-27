@@ -24,6 +24,10 @@ export interface ApiDeps {
   jwtSecret: string;
   jwtExpiry: string;
   defaultCity: string;
+  /** Service catalog exposed to clients via GET /catalog. */
+  serviceTypes?: readonly string[];
+  /** Absolute path to the member web app HTML; GET / serves it when set. */
+  webAppPath?: string;
   members: PrincipalStore;
   providers: PrincipalStore;
   /** Ops principals are seeded by script (scripts/seed-ops.ts), NEVER
@@ -42,6 +46,16 @@ export interface ApiDeps {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+
+// The member web app is a single static file, read once and cached.
+let webAppCache: string | null = null;
+async function readWebApp(path: string): Promise<string> {
+  if (webAppCache === null) {
+    const { readFile } = await import("node:fs/promises");
+    webAppCache = await readFile(path, "utf8");
+  }
+  return webAppCache;
+}
 
 class HttpError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -144,6 +158,16 @@ export function createApi(deps: ApiDeps): Server {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const route = `${req.method} ${path}`;
+
+    if (route === "GET /" && deps.webAppPath) {
+      const html = await readWebApp(deps.webAppPath);
+      return [200, { __raw: html, contentType: "text/html; charset=utf-8" }];
+    }
+
+    if (route === "GET /catalog") {
+      // Public, non-sensitive: what a client needs to render the request form.
+      return [200, { serviceTypes: deps.serviceTypes ?? [], defaultCity: deps.defaultCity }];
+    }
 
     if (route === "GET /health") {
       const checks = deps.healthChecks ?? {};
@@ -340,6 +364,12 @@ export function createApi(deps: ApiDeps): Server {
     handle(req, res)
       .then(([status, payload]) => {
         access(status);
+        const raw = payload as { __raw?: string; contentType?: string };
+        if (raw && typeof raw.__raw === "string") {
+          res.writeHead(status, { "content-type": raw.contentType ?? "text/plain" });
+          res.end(raw.__raw);
+          return;
+        }
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(payload));
       })
