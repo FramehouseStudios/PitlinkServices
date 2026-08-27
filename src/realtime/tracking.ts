@@ -48,12 +48,12 @@ export class TrackingService {
       return { recorded: false, reason: "invalid_coordinates" };
     }
     const request = await this.requests.get(requestId);
-    if (!request || request.status !== "en_route") {
-      return { recorded: false, reason: "request_not_en_route" };
-    }
-    // The spine is the source of truth for assignment.
-    const assigned = await this.assignedProvider(requestId);
+    if (!request) return { recorded: false, reason: "not_assigned_provider" };
+    // Assignment BEFORE status: an unassigned provider learns nothing about
+    // this request's state. The spine is the source of truth for assignment.
+    const assigned = await this.requests.assignedProvider(requestId);
     if (assigned !== providerId) return { recorded: false, reason: "not_assigned_provider" };
+    if (request.status !== "en_route") return { recorded: false, reason: "request_not_en_route" };
 
     const last = this.lastPingAt.get(requestId);
     if (last !== undefined && now.getTime() - last < this.minIntervalMs) {
@@ -86,15 +86,4 @@ export class TrackingService {
     return { recorded: true, distanceKm, etaMinutes };
   }
 
-  /** Provider assigned by the most recent provider.accepted event, if any. */
-  private async assignedProvider(requestId: string): Promise<string | null> {
-    const timeline = await this.evidence.timeline(requestId);
-    for (let i = timeline.length - 1; i >= 0; i--) {
-      const event = timeline[i]!;
-      if (event.eventType === "provider.accepted") {
-        return (event.payload as { providerId?: string }).providerId ?? event.actorId;
-      }
-    }
-    return null;
-  }
 }

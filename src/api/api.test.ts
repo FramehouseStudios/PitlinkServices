@@ -6,6 +6,10 @@ import { InMemoryPrincipalStore } from "../common/auth/principalStore.js";
 import { InMemoryEvidenceStore } from "../common/evidence/inMemoryStore.js";
 import { InMemoryRequestStore } from "../requests/store.js";
 import { RequestService } from "../requests/service.js";
+import { MatchingEngine } from "../matching/engine.js";
+import { InMemoryProviderPresence } from "../realtime/presence.js";
+import { PresenceProviderDirectory } from "../realtime/directory.js";
+import { TrackingService } from "../realtime/tracking.js";
 import { createApi } from "./server.js";
 import { signToken } from "../common/auth/token.js";
 
@@ -13,16 +17,33 @@ const SECRET = "api-test-secret";
 let server: Server;
 let base: string;
 let audit: InMemoryAuthAuditSink;
+let requests: RequestService;
+let engine: MatchingEngine;
+let healthy = { postgres: true };
 
 beforeAll(async () => {
   audit = new InMemoryAuthAuditSink();
+  const evidence = new InMemoryEvidenceStore();
+  requests = new RequestService(evidence, new InMemoryRequestStore(), DEFAULT_SERVICE_TYPES);
+  const presence = new InMemoryProviderPresence();
+  engine = new MatchingEngine(new PresenceProviderDirectory(presence), requests, evidence, {
+    marketplaceEnabled: true,
+  });
   server = createApi({
     jwtSecret: SECRET,
     jwtExpiry: "1h",
     defaultCity: "los-angeles",
     members: new InMemoryPrincipalStore("member"),
-    requests: new RequestService(new InMemoryEvidenceStore(), new InMemoryRequestStore(), DEFAULT_SERVICE_TYPES),
+    providers: new InMemoryPrincipalStore("provider"),
+    requests,
+    presence,
+    tracking: new TrackingService(evidence, requests, { minPingIntervalSeconds: 0 }),
     audit,
+    healthChecks: {
+      postgres: async () => {
+        if (!healthy.postgres) throw new Error("down");
+      },
+    },
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address();
@@ -129,6 +150,83 @@ describe("member API", () => {
     expect((await call("POST", `/requests/${id}/cancel`, { token: mallory, key: "evil" })).status).toBe(404);
     // Alice's request is untouched.
     expect((await call("GET", `/requests/${id}`, { token: alice })).json.status).toBe("created");
+  });
+
+  it("health endpoint: 200 when dependencies are up, 503 when one fails", async () => {
+    expect(await call("GET", "/health")).toMatchObject({ status: 200, json: { status: "ok" } });
+    healthy.postgres = false;
+    const degraded = await call("GET", "/health");
+    expect(degraded.status).toBe(503);
+    expect(degraded.json.checks.postgres).toBe("fail");
+    healthy.postgres = true;
+  });
+
+  it("provider journey over HTTP: signup → heartbeat → match → en_route → ping → on_scene → resolved", async () => {
+    const providerResult = await call("POST", "/providers/signup", {
+      body: { email: "pro@example.com", password: "correct-horse" },
+    });
+    expect(providerResult.status).toBe(201);
+    const providerToken = providerResult.json.token as string;
+
+    const beat = await call("POST", "/providers/heartbeat", {
+      token: providerToken,
+      body: { lat: 34.06, lng: -118.25, serviceTypes: ["tow"] },
+    });
+    expect(beat.status).toBe(200);
+
+    // Member requests; system triages; engine matches against the heartbeat.
+    const memberToken = await signup("journey-member@example.com");
+    const created = await call("POST", "/requests", {
+      token: memberToken,
+      key: "pj-1",
+      body: { serviceType: "tow", lat: 34.05, lng: -118.24 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "pj-t");
+    const match = await engine.match(id, "pj-m");
+    expect(match.matched).toBe(true);
+
+    for (const step of ["en_route", "ping:34.055,-118.245", "on_scene", "resolved"]) {
+      if (step.startsWith("ping")) {
+        const ping = await call("POST", `/requests/${id}/ping`, {
+          token: providerToken,
+          body: { lat: 34.055, lng: -118.245 },
+        });
+        expect(ping.status).toBe(200);
+        expect(ping.json.recorded).toBe(true);
+      } else {
+        const result = await call("POST", `/requests/${id}/${step}`, { token: providerToken, key: `pj-${step}` });
+        expect(result.status).toBe(200);
+        expect(result.json.status).toBe(step);
+      }
+    }
+    // The member sees the full story in their timeline.
+    const timeline = await call("GET", `/requests/${id}/timeline`, { token: memberToken });
+    expect(timeline.json.events.map((e: any) => e.eventType)).toContain("request.location_update");
+  });
+
+  it("adversarial: member tokens are rejected on provider surfaces; an unassigned provider gets 404, not information", async () => {
+    const memberToken = await signup("cross-pop@example.com");
+    expect(
+      (await call("POST", "/providers/heartbeat", { token: memberToken, body: { lat: 1, lng: 1, serviceTypes: ["tow"] } }))
+        .status
+    ).toBe(401);
+
+    const imposter = await call("POST", "/providers/signup", {
+      body: { email: "imposter@example.com", password: "correct-horse" },
+    });
+    const created = await call("POST", "/requests", {
+      token: memberToken,
+      key: "cp-1",
+      body: { serviceType: "lockout", lat: 34, lng: -118 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "cp-t");
+    // Unassigned provider probing journey + ping endpoints: 404 both.
+    expect((await call("POST", `/requests/${id}/en_route`, { token: imposter.json.token, key: "x" })).status).toBe(404);
+    expect(
+      (await call("POST", `/requests/${id}/ping`, { token: imposter.json.token, body: { lat: 34, lng: -118 } })).status
+    ).toBe(404);
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

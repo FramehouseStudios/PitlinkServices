@@ -18,11 +18,26 @@ function setup() {
   return { evidence, service };
 }
 
+/** Record an assignment on the spine (what the matching engine does). */
+async function assign(evidence: InMemoryEvidenceStore, requestId: string, providerId: string) {
+  await evidence.append({
+    requestId,
+    eventType: "provider.accepted",
+    payload: { providerId },
+    actorType: "provider",
+    actorId: providerId,
+    calculationRulesVersion: "test",
+    idempotencyKey: `assign:${requestId}:${providerId}`,
+    occurredAt: new Date(),
+  });
+}
+
 describe("request lifecycle", () => {
   it("runs the full physical journey and reproduces the timeline from the spine", async () => {
-    const { service } = setup();
+    const { evidence, service } = setup();
     const request = await service.create(MEMBER, INPUT, "create-1");
     await service.transition(SYSTEM, request.id, "triaged", "t1");
+    await assign(evidence, request.id, PROVIDER.id);
     await service.transition(SYSTEM, request.id, "matched", "t2");
     await service.transition(PROVIDER, request.id, "en_route", "t3");
     await service.transition(PROVIDER, request.id, "on_scene", "t4");
@@ -34,6 +49,7 @@ describe("request lifecycle", () => {
     expect(timeline.map((e) => e.eventType)).toEqual([
       "request.created",
       "request.triaged",
+      "provider.accepted",
       "request.matched",
       "request.en_route",
       "request.on_scene",
@@ -121,6 +137,22 @@ describe("request lifecycle", () => {
     const cancelled = await service.transition(MEMBER, b.id, "cancelled", "shared-key");
     expect(cancelled.status).toBe("cancelled");
     expect((await service.get(b.id))?.status).toBe("cancelled");
+  });
+
+  it("adversarial: an unassigned provider cannot drive the journey, and the denial is audited", async () => {
+    const { evidence, service } = setup();
+    const request = await service.create(MEMBER, INPUT, "c1");
+    await service.transition(SYSTEM, request.id, "triaged", "t1");
+    await assign(evidence, request.id, PROVIDER.id);
+    await service.transition(SYSTEM, request.id, "matched", "t2");
+    const imposter = { type: "provider" as const, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
+    await expect(service.transition(imposter, request.id, "en_route", "x1")).rejects.toThrow(/not_assigned_provider/);
+    // The assigned provider proceeds normally.
+    await service.transition(PROVIDER, request.id, "en_route", "t3");
+    const denials = (await service.timeline(request.id)).filter((e) => e.eventType === "request.transition_denied");
+    expect(denials).toHaveLength(1);
+    expect(denials[0]?.payload).toMatchObject({ reason: "not_assigned_provider" });
+    expect(denials[0]?.actorId).toBe(imposter.id);
   });
 
   it("failure mode: terminal states accept nothing", async () => {

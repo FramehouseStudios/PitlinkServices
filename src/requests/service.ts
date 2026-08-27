@@ -105,7 +105,7 @@ export class RequestService {
     if (record.status === to) return record; // idempotent no-op
 
     const from = record.status;
-    const deny = async (reason: "illegal_transition" | "wrong_actor_population") => {
+    const deny = async (reason: "illegal_transition" | "wrong_actor_population" | "not_assigned_provider") => {
       // Hard rule 10: privileged-write denials are audited — on the spine,
       // request-scoped, before the error surfaces.
       const denial = await this.evidence.append({
@@ -122,10 +122,18 @@ export class RequestService {
       throw new IllegalTransitionError(from, to, reason);
     };
 
-    if (!TRANSITIONS[from].includes(to)) await deny("illegal_transition");
+    // Identity checks come BEFORE state-machine checks: an actor with no
+    // right to this request must learn nothing about its state from the
+    // error they receive.
     if (!TRANSITION_ACTORS[to].includes(actor.type)) await deny("wrong_actor_population");
     // A member may only act on their own request.
     if (actor.type === "member" && actor.id !== record.memberId) await deny("wrong_actor_population");
+    // A provider may only act on a request they were assigned to — the
+    // spine's provider.accepted event is the source of truth for assignment.
+    if (actor.type === "provider" && (await this.assignedProvider(requestId)) !== actor.id) {
+      await deny("not_assigned_provider");
+    }
+    if (!TRANSITIONS[from].includes(to)) await deny("illegal_transition");
 
     const nonce = randomUUID();
     const event = await this.evidence.append({
@@ -161,6 +169,18 @@ export class RequestService {
 
   async timeline(requestId: string): Promise<EvidenceEvent[]> {
     return this.evidence.timeline(requestId);
+  }
+
+  /** Provider assigned by the most recent provider.accepted event, if any. */
+  async assignedProvider(requestId: string): Promise<string | null> {
+    const timeline = await this.evidence.timeline(requestId);
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const event = timeline[i]!;
+      if (event.eventType === "provider.accepted") {
+        return (event.payload as { providerId?: string }).providerId ?? event.actorId;
+      }
+    }
+    return null;
   }
 
   /** Rebuild a missing projection row from its creation event. */

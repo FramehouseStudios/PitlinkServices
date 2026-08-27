@@ -33,6 +33,16 @@ async function journey(kind: "dispatched" | "remote" | "open", minutesToArrival 
   if (kind === "remote") {
     await requests.transition(SYSTEM, record.id, "resolved", "t2", t(9));
   } else if (kind === "dispatched") {
+    await evidence.append({
+      requestId: record.id,
+      eventType: "provider.accepted",
+      payload: { providerId: PROVIDER.id },
+      actorType: "provider",
+      actorId: PROVIDER.id,
+      calculationRulesVersion: "test",
+      idempotencyKey: `assign:${record.id}`,
+      occurredAt: t(2),
+    });
     await requests.transition(SYSTEM, record.id, "matched", "t2", t(3));
     await requests.transition(PROVIDER, record.id, "en_route", "t3", t(5));
     await requests.transition(PROVIDER, record.id, "on_scene", "t4", t(minutesToArrival));

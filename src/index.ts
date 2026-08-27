@@ -13,7 +13,9 @@ import { RedisProviderPresence } from "./realtime/presence.js";
 import { PresenceProviderDirectory } from "./realtime/directory.js";
 import { RequestEventBus } from "./realtime/bus.js";
 import { attachWs } from "./realtime/ws.js";
+import { TrackingService } from "./realtime/tracking.js";
 import { createApi } from "./api/server.js";
+import { Logger } from "./common/logger.js";
 
 const config = loadConfig(process.env);
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -36,17 +38,32 @@ export const matching = new MatchingEngine(
   { marketplaceEnabled: config.flags.enableProviderMarketplace, onEvent: (e) => bus.publish(e) }
 );
 
+const logger = new Logger({ app: "pitlink" });
+
 const api = createApi({
   jwtSecret: config.jwtSecret,
   jwtExpiry: config.jwtExpiry,
   defaultCity: config.defaultCity,
   members: new PostgresPrincipalStore(pool, "member"),
+  providers: new PostgresPrincipalStore(pool, "provider"),
   requests,
+  presence,
+  tracking: new TrackingService(evidence, requests, {}, (e) => bus.publish(e)),
   audit,
+  logger,
+  healthChecks: {
+    postgres: async () => {
+      await pool.query("SELECT 1");
+    },
+    redis: async () => {
+      // A zero-TTL-safe probe: reading candidates exercises the connection.
+      await presence.candidates("__health__", "__health__");
+    },
+  },
 });
 attachWs(api, { jwtSecret: config.jwtSecret, requests, bus, audit });
 
 const port = Number(process.env.PORT ?? 3000);
 api.listen(port, () => {
-  console.log(`pitlink api+ws listening on :${port} (city: ${config.defaultCity})`);
+  logger.info("listening", { port, city: config.defaultCity });
 });

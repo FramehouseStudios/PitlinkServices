@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increments 9 + 10 complete; pushed to
-https://github.com/FramehouseStudios/PitlinkServices)
+Last updated: 2026-08-26 (Increment 11 + provider API surface complete;
+pushed to https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
 
@@ -23,7 +23,8 @@ reproducible timeline.
 | 8 | Live provider adapter + acceptance | pending (Phase 1 gated — needs real providers) |
 | 9 | Tracking + ETA events | **DONE** (this hand-off) |
 | 10 | Reconciliation + metric calculation rules | **DONE** (this hand-off) |
-| 11 | Observability baseline | **NEXT** |
+| 11 | Observability baseline | **DONE** (this hand-off) |
+| — | Provider API surface (beyond plan) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -210,6 +211,32 @@ reproducible timeline.
   the timeline) and derives its metrics through the versioned rules +
   reconciliation — the exit criterion and the metrics story are one test.
 
+### Increment 11 + provider surface decisions
+
+- **Security fix (real):** transition authorization previously checked
+  population only — ANY provider principal could push en_route on ANY
+  matched request. `RequestService.transition` now enforces assignment from
+  the spine's `provider.accepted` (single source: `assignedProvider()`,
+  shared with tracking), denial reason `not_assigned_provider`, audited.
+- **Second fix from the adversarial pass:** identity checks (population,
+  ownership, assignment) now run BEFORE state-machine checks in both
+  `transition` and `providerPing` — an actor with no right to a request
+  learns nothing about its state from the error; the API masks
+  `not_assigned_provider` as 404.
+- Logger (`src/common/logger.ts`): owned JSON-lines logger; keys matching
+  token/password/secret/authorization/apiKey/email/card/ssn are REDACTED at
+  write time, nested objects included — hard rule 9 enforced structurally.
+  API access logs carry method/path/status/ms only.
+- `GET /health`: dependency probes injected via `healthChecks`
+  (Postgres SELECT 1, Redis candidates read in prod wiring); 200/503.
+- Provider HTTP surface: `/providers/signup|login` (shared handler,
+  structurally separate stores), `/providers/heartbeat` (TTL default 60s
+  ESTIMATE), `POST /requests/:id/en_route|on_scene|resolved` (Idempotency-Key
+  required), `POST /requests/:id/ping`. Full provider journey now drivable
+  over HTTP — tested end to end incl. member timeline visibility.
+- OTel/Sentry remain env placeholders — wire exporters when a deploy target
+  exists.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -237,16 +264,18 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 11)
+## Next active task
 
-Observability baseline: an owned structured logger (JSON lines; hard rule 9 —
-no secrets, payment data, or PII in log fields), API access logging (method,
-path pattern, status, latency, principal type — never bodies or tokens), and
-a `/health` endpoint (DB + Redis reachability) for deploys. OTel/Sentry
-remain env-hook placeholders per the Blueprint — wire real exporters only
-when there is a deploy target. After that the only remaining increments are
-gated: 8 (live providers — Phase 1), 12 (first paid path — founder pricing +
-Stripe keys [ABSOLUTELY-HUMAN]). Worthwhile ungated work beyond the plan:
-provider API surface (signup/login exists domain-side; expose provider
-endpoints incl. heartbeat + en_route/on_scene transitions), vehicles bounded
-context, post-resolution feedback events (see intel memo backlog).
+The Delivery Plan's ungated increments are COMPLETE (1–7, 9–11 + provider
+surface). Remaining gates: 8 (live providers — Phase 1 physical work),
+12 (first paid path — founder pricing + Stripe keys [ABSOLUTELY-HUMAN]).
+
+Highest-leverage ungated backlog, in order:
+1. Vehicles bounded context (intel memo): member vehicles, optional
+   vehicleId on request create — triage quality depends on it.
+2. Post-resolution feedback (`request.feedback` evidence; member-only,
+   own-request-only) — retention signal + provider quality from the spine.
+3. Ops read surface: fleet metrics endpoint (ops principal) serving
+   `fleetMetrics()` over recent requests + reconciliation sweep.
+4. Member web surface (web-first per canonical docs) — the "Dorsey-grade"
+   minimal UI: one screen to request help, one live tracking view.

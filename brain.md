@@ -10,11 +10,12 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–7 and 9–10 complete; 11
-  (observability) next. Gated: 8 (live providers — Phase 1), 12 (first paid
-  path — founder pricing + Stripe keys). The Phase 0 exit criterion passes as
-  an executable test (`src/phase0.exit.test.ts`), now including tracking and
-  the versioned metric rules.
+- **Status:** Phase 0 — Foundation. ALL ungated Delivery Plan increments
+  complete (1–7, 9–11 + provider HTTP surface). Gated: 8 (live providers —
+  Phase 1), 12 (first paid path — founder pricing + Stripe keys). The Phase 0
+  exit criterion passes as an executable test (`src/phase0.exit.test.ts`).
+  Next: backlog in `docs/HANDOFF.md` (vehicles, feedback, ops metrics
+  endpoint, member web surface).
 
 ---
 
@@ -252,3 +253,10 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   resolution rate, paid-by-currency, fleet medians; deriveStatus +
   reconcileRequest report drift, never repair. Exit test now proves
   "tracked" and computes its numbers through the versioned rules. 76/76.
+- **2026-08-26** — Increment 11 + provider HTTP surface shipped. TWO real
+  security fixes from the adversarial pass: (1) provider transitions now
+  require spine-derived assignment (any provider could previously drive any
+  matched request); (2) identity checks run before state-machine checks so
+  unauthorized actors learn nothing from errors (API masks as 404). Owned
+  redacting JSON logger (hard rule 9 structural), /health with dependency
+  probes, access logs. Provider journey fully drivable over HTTP. 82/82.

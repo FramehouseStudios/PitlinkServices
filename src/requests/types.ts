@@ -64,7 +64,7 @@ export class IllegalTransitionError extends Error {
   constructor(
     public readonly from: RequestStatus,
     public readonly to: RequestStatus,
-    public readonly reason: "illegal_transition" | "wrong_actor_population"
+    public readonly reason: "illegal_transition" | "wrong_actor_population" | "not_assigned_provider"
   ) {
     super(`cannot transition ${from} → ${to} (${reason})`);
     this.name = "IllegalTransitionError";
