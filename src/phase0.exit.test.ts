@@ -1,0 +1,86 @@
+// PHASE 0 EXIT CRITERION, EXECUTABLE:
+// "An end-to-end request can be created, matched (mock or live), tracked,
+//  and closed with stored evidence events that produce a reproducible
+//  timeline."
+// This test chains the real domain services — no shortcuts through stores —
+// and then reproduces the timeline AND a first metric purely from the spine.
+import { describe, expect, it } from "vitest";
+import { DEFAULT_SERVICE_TYPES } from "./common/config.js";
+import { InMemoryEvidenceStore } from "./common/evidence/inMemoryStore.js";
+import { RequestService } from "./requests/service.js";
+import { InMemoryRequestStore } from "./requests/store.js";
+import { MockProviderDirectory } from "./matching/directory.js";
+import { MatchingEngine } from "./matching/engine.js";
+
+const MEMBER = { type: "member" as const, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+
+describe("PHASE 0 EXIT CRITERION", () => {
+  it("full journey: created → triaged → matched → en_route → on_scene → resolved → closed, reproducible from the spine", async () => {
+    const evidence = new InMemoryEvidenceStore();
+    const requests = new RequestService(evidence, new InMemoryRequestStore(), DEFAULT_SERVICE_TYPES);
+    const engine = new MatchingEngine(
+      new MockProviderDirectory([
+        {
+          id: "provider-1",
+          serviceTypes: ["tow"],
+          city: "los-angeles",
+          lat: 34.06,
+          lng: -118.25,
+          available: true,
+        },
+      ]),
+      requests,
+      evidence,
+      { marketplaceEnabled: true }
+    );
+
+    const t = (minutes: number) => new Date(Date.UTC(2026, 7, 26, 10, minutes));
+
+    // The journey, driven only through the public domain surface.
+    const request = await requests.create(
+      MEMBER,
+      { serviceType: "tow", city: "los-angeles", lat: 34.05, lng: -118.24 },
+      "exit-create",
+      t(0)
+    );
+    await requests.transition({ type: "system", id: "triage-agent" }, request.id, "triaged", "e1", t(1));
+    const match = await engine.match(request.id, "exit-match", t(3));
+    expect(match.matched).toBe(true);
+    const providerId = (match as { providerId: string }).providerId;
+    const provider = { type: "provider" as const, id: providerId };
+    await requests.transition(provider, request.id, "en_route", "e2", t(5));   // tracking: provider moving
+    await requests.transition(provider, request.id, "on_scene", "e3", t(18));  // arrival
+    await requests.transition(provider, request.id, "resolved", "e4", t(40));
+    await requests.transition({ type: "ops", id: "reconciler" }, request.id, "closed", "e5", t(45));
+
+    // 1. The timeline is complete, ordered, and fully attributed.
+    const timeline = await evidence.timeline(request.id);
+    expect(timeline.map((e) => e.eventType)).toEqual([
+      "request.created",
+      "request.triaged",
+      "provider.offered",
+      "provider.accepted",
+      "request.matched",
+      "request.en_route",
+      "request.on_scene",
+      "request.resolved",
+      "request.closed",
+    ]);
+    for (const event of timeline) {
+      expect(event.actorType).toBeTruthy();
+      expect(event.actorId).toBeTruthy();
+      expect(event.calculationRulesVersion).toBeTruthy();
+    }
+
+    // 2. The primary North Star metric is derivable from stored events alone:
+    //    request→arrival = on_scene.occurredAt − created.occurredAt.
+    const created = timeline.find((e) => e.eventType === "request.created")!;
+    const onScene = timeline.find((e) => e.eventType === "request.on_scene")!;
+    const requestToArrivalMinutes =
+      (onScene.occurredAt.getTime() - created.occurredAt.getTime()) / 60000;
+    expect(requestToArrivalMinutes).toBe(18);
+
+    // 3. The read model agrees with the spine's terminal state.
+    expect((await requests.get(request.id))?.status).toBe("closed");
+  });
+});

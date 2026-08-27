@@ -36,7 +36,25 @@ an evidence spine before any live marketplace work.
   `~/Pitlink Services` (note the space in the path — quote it in shell).
 - Standing instruction (2026-08-26): keep the GitHub repo and the local folder
   in sync — commit and push verified work without waiting to be asked.
+- Autonomy mandate [DECIDED 2026-08-26]: the agent operates with CEO-level
+  decision authority — make decisive, labeled, reversible decisions and keep
+  completing tasks autonomously. Stop for the founder ONLY on matters that
+  are "absolutely human": binding contracts, capital commitments, spending
+  real money, legal exposure, and irreversible commercial terms. Open RFIs
+  may be given labeled PROVISIONAL working answers where reversible, but
+  never silently finalized.
 - The founder decided the runtime: Node.js + TypeScript [DECIDED 2026-08-26].
+- Founder directive [DECIDED 2026-08-26]: operate as an "intelligence business
+  developer" — continuously align the build toward customer outcomes using
+  research and evidence; aim for YC-grade product quality; product surfaces
+  should be radically minimal and proactive (the founder's reference point:
+  Jack Dorsey-style interface discipline); capital preservation is absolute
+  ("never go to zero, never go negative") and building durable company value
+  is the agent's north star. Interpretation under the doctrine: ship the
+  smallest measurable product loop, instrument everything, let stored
+  evidence — not narrative — drive roadmap alignment; proactive intelligence
+  means the product acts before the member asks, never that the agent invents
+  commercial facts.
 
 ## Active priorities
 

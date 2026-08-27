@@ -10,7 +10,9 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–4 complete, 5 next.
+- **Status:** Phase 0 — Foundation. Increments 1–5 complete, 6 next. The
+  Phase 0 exit criterion passes as an executable test
+  (`src/phase0.exit.test.ts`).
 
 ---
 
@@ -219,3 +221,11 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   loop with iteration ceiling and safe handoff, remote-resolution journey
   tested end to end on the spine. Fixed a real defect the process surfaced:
   transition idempotency keys are now scoped per request. 45/45 tests.
+- **2026-08-26** — Increment 5 shipped: MatchingEngine (nearest capable
+  available provider; offer/accept as separate spine events so live Phase 1
+  flow needs no schema change; match_failed measurable on the spine;
+  marketplace flag honored). PHASE 0 EXIT CRITERION NOW EXECUTABLE AND
+  GREEN: full journey test reproduces the timeline and derives
+  request→arrival purely from stored events. 52/52 tests. Founder mandates
+  recorded (intelligence business developer; CEO-level autonomy — stop only
+  for binding/capital/legal).

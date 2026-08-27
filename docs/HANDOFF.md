@@ -1,6 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 4 complete; pushed to
+Last updated: 2026-08-26 (Increment 5 complete + Phase 0 exit criterion
+passing as an executable test; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -16,9 +17,9 @@ reproducible timeline.
 | 1 | Project skeleton + config + evidence table | DONE |
 | 2 | Auth + member/provider principals | DONE |
 | 3 | Request create + append-only events | DONE |
-| 4 | Basic AI agent tool-calling loop | **DONE** (this hand-off) |
-| 5 | Matching interface (mock providers) | **NEXT** |
-| 6 | Redis presence + WS status | pending |
+| 4 | Basic AI agent tool-calling loop | DONE |
+| 5 | Matching interface (mock providers) | **DONE** (this hand-off) |
+| 6 | Redis presence + WS status | **NEXT** |
 | 7 | Stripe membership/incident skeleton | pending |
 | 8–12 | Live provider adapter, tracking/ETA, reconciliation, observability, first paid path | pending |
 
@@ -105,6 +106,30 @@ reproducible timeline.
   that lands with (or after) the real LLM adapter decision, since a scripted
   conversation over HTTP proves nothing new.
 
+### Increment 5 decisions (matching)
+
+- `MatchingEngine` (`src/matching/engine.ts`): triaged request → nearest
+  capable available provider (haversine, `src/common/geo.ts`), with the
+  offer/accept pair recorded as SEPARATE evidence events
+  (`provider.offered` system / `provider.accepted` provider) even though the
+  Phase 0 mock auto-accepts — Phase 1's real accept/decline latency drops in
+  behind the same events with no schema change.
+- Match failure is metric-affecting (density risk is the #1 business risk),
+  so `request.match_failed` goes on the spine with reason + city; the request
+  stays `triaged` and a new attempt can succeed after supply recovers
+  (tested). `ENABLE_PROVIDER_MARKETPLACE=false` refuses cleanly with NO
+  evidence (config state, not a runtime event).
+- `MockProviderDirectory` seed data is explicitly MOCK — no commercial
+  meaning, never customer-facing.
+- **Phase 0 exit criterion is now an executable test**
+  (`src/phase0.exit.test.ts`): the full journey driven only through public
+  domain surfaces, timeline reproduced from the spine, and request→arrival
+  (18 min in the fixture) derived from stored events alone. This is the
+  falsifiable phase gate — run it any time someone asks "is Phase 0 real?"
+- Founder mandates recorded in `agent/USER.md`: intelligence-business-
+  developer directive + CEO-level autonomy (stop only for binding/capital/
+  legal matters).
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -132,16 +157,14 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 5)
+## Next active task (Increment 6)
 
-Matching interface with mock providers: an owned `MatchingEngine` interface
-in `src/matching/` that takes a triaged request and produces a provider
-assignment (`request.matched` evidence, actor `system`), backed by a mock
-provider pool for Phase 0 (seeded providers in DEFAULT_CITY with simple
-nearest/available selection — real presence comes with increment 6's Redis
-work). Provider offer/accept can be modeled as evidence events now
-(`provider.offered`, `provider.accepted`) so Phase 1's live flow drops in
-behind the same interface. Respect ENABLE_PROVIDER_MARKETPLACE flag. After
-this, the full Phase 0 exit-criterion path (create → triage → match → track →
-close) needs only tracking events (increment 9 can be mocked minimally) and
-is provable end to end.
+Redis presence + WS status: an owned presence interface (`src/realtime/`)
+backed by Redis (REDIS_URL from config) tracking provider availability and
+location heartbeats — which then replaces `MockProviderDirectory`'s static
+`available` flag as the live supply source behind the same
+`ProviderDirectory` interface — plus a WebSocket status surface so a member
+can watch their request move through the lifecycle in real time (subscribe
+by request id, member-scoped auth, events sourced from the spine). Keep the
+in-memory fallback for tests. After this: increment 7 (Stripe skeleton
+behind an owned payments adapter).
