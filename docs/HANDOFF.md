@@ -1,6 +1,6 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Increment 7 complete; pushed to
+Last updated: 2026-08-26 (Increments 9 + 10 complete; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -21,9 +21,9 @@ reproducible timeline.
 | 6 | Redis presence + WS status | DONE |
 | 7 | Stripe membership/incident skeleton | **DONE** (this hand-off) |
 | 8 | Live provider adapter + acceptance | pending (Phase 1 gated — needs real providers) |
-| 9 | Tracking + ETA events | **NEXT** |
-| 10 | Reconciliation + metric calculation rules | pending |
-| 11 | Observability baseline | pending |
+| 9 | Tracking + ETA events | **DONE** (this hand-off) |
+| 10 | Reconciliation + metric calculation rules | **DONE** (this hand-off) |
+| 11 | Observability baseline | **NEXT** |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -181,6 +181,35 @@ reproducible timeline.
   Rejected: shared user table, card storage in our DB, session auth, its
   deprecated client stack.
 
+### Increment 9 decisions (tracking + ETA)
+
+- `TrackingService` (`src/realtime/tracking.ts`): pings accepted only from
+  the ASSIGNED provider (assignment derived from the spine's
+  `provider.accepted` — evidence is the source of truth, no new column),
+  only while `en_route`, throttled (default min 15s between recorded pings;
+  denied/throttled pings leave nothing on the spine).
+- ETA is an ESTIMATE with its basis stored IN the event payload
+  (`etaBasis: { method: "straight_line", assumedSpeedKmh }`) so every
+  historical ETA is recomputable. A maps/routing adapter replaces the
+  heuristic behind an owned interface when routing is worth paying for.
+
+### Increment 10 decisions (metrics + reconciliation)
+
+- `src/common/metrics/calculations.ts`: THE versioned metric rules
+  (`METRIC_RULES_VERSION`), pure functions over `EvidenceEvent[]`:
+  request→arrival / →resolution / →match, remote-resolution rate
+  (unresolved requests are excluded, not counted as failures), match-failure
+  count, paid cents by currency (succeeded only), `fleetMetrics()` medians.
+  Any published number must come from these functions over the spine.
+- `src/common/metrics/reconcile.ts`: `deriveStatus` (last lifecycle event
+  wins) + `reconcileRequest` reporting `status_drift` / `missing_projection`
+  / `no_lifecycle_events`. Discrepancies are REPORTED, never auto-repaired.
+  No scheduled job yet — single process, run on demand; a cron joins with
+  the ops surface.
+- The Phase 0 exit test now also proves "tracked" (a real location ping in
+  the timeline) and derives its metrics through the versioned rules +
+  reconciliation — the exit criterion and the metrics story are one test.
+
 ## Open RFIs (surface, don't invent)
 
 - Pricing/packaging, provider payout model, Phase 1 density targets,
@@ -208,15 +237,16 @@ reproducible timeline.
 - No HTTP server / entrypoint yet — deliberately deferred until increments 2–3
   give it something real to serve.
 
-## Next active task (Increment 9 — 8 is Phase 1-gated)
+## Next active task (Increment 11)
 
-Tracking + ETA events: provider location pings during en_route
-(`request.location_update` evidence with lat/lng + computed distance-to-
-member; throttled), ETA derivation as a versioned calculation
-(straight-line/speed heuristic now — a maps adapter slots in later behind an
-owned interface), pushed to the member over the existing WS surface. Then
-increment 10 (reconciliation + metric rules: median request→arrival and
-cost/incident as versioned calculations over the spine) — the two together
-make the metrics story complete. Increment 8 (live provider adapter) stays
-gated on real providers; increment 12 (first paid path) stays gated on
-founder pricing + Stripe keys [ABSOLUTELY-HUMAN gate].
+Observability baseline: an owned structured logger (JSON lines; hard rule 9 —
+no secrets, payment data, or PII in log fields), API access logging (method,
+path pattern, status, latency, principal type — never bodies or tokens), and
+a `/health` endpoint (DB + Redis reachability) for deploys. OTel/Sentry
+remain env-hook placeholders per the Blueprint — wire real exporters only
+when there is a deploy target. After that the only remaining increments are
+gated: 8 (live providers — Phase 1), 12 (first paid path — founder pricing +
+Stripe keys [ABSOLUTELY-HUMAN]). Worthwhile ungated work beyond the plan:
+provider API surface (signup/login exists domain-side; expose provider
+endpoints incl. heartbeat + en_route/on_scene transitions), vehicles bounded
+context, post-resolution feedback events (see intel memo backlog).

@@ -11,6 +11,9 @@ import { RequestService } from "./requests/service.js";
 import { InMemoryRequestStore } from "./requests/store.js";
 import { MockProviderDirectory } from "./matching/directory.js";
 import { MatchingEngine } from "./matching/engine.js";
+import { TrackingService } from "./realtime/tracking.js";
+import { fleetMetrics } from "./common/metrics/calculations.js";
+import { reconcileRequest } from "./common/metrics/reconcile.js";
 
 const MEMBER = { type: "member" as const, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
 
@@ -48,7 +51,11 @@ describe("PHASE 0 EXIT CRITERION", () => {
     expect(match.matched).toBe(true);
     const providerId = (match as { providerId: string }).providerId;
     const provider = { type: "provider" as const, id: providerId };
-    await requests.transition(provider, request.id, "en_route", "e2", t(5));   // tracking: provider moving
+    await requests.transition(provider, request.id, "en_route", "e2", t(5));
+    // Tracked: a live location ping with reproducible ETA inputs.
+    const tracking = new TrackingService(evidence, requests);
+    const ping = await tracking.providerPing(providerId, request.id, 34.058, -118.245, t(10));
+    expect(ping.recorded).toBe(true);
     await requests.transition(provider, request.id, "on_scene", "e3", t(18));  // arrival
     await requests.transition(provider, request.id, "resolved", "e4", t(40));
     await requests.transition({ type: "ops", id: "reconciler" }, request.id, "closed", "e5", t(45));
@@ -62,6 +69,7 @@ describe("PHASE 0 EXIT CRITERION", () => {
       "provider.accepted",
       "request.matched",
       "request.en_route",
+      "request.location_update",
       "request.on_scene",
       "request.resolved",
       "request.closed",
@@ -72,15 +80,15 @@ describe("PHASE 0 EXIT CRITERION", () => {
       expect(event.calculationRulesVersion).toBeTruthy();
     }
 
-    // 2. The primary North Star metric is derivable from stored events alone:
-    //    request→arrival = on_scene.occurredAt − created.occurredAt.
-    const created = timeline.find((e) => e.eventType === "request.created")!;
-    const onScene = timeline.find((e) => e.eventType === "request.on_scene")!;
-    const requestToArrivalMinutes =
-      (onScene.occurredAt.getTime() - created.occurredAt.getTime()) / 60000;
-    expect(requestToArrivalMinutes).toBe(18);
+    // 2. The North Star metrics come from the VERSIONED calculation rules
+    //    over stored events alone — no other source.
+    const report = fleetMetrics([timeline]);
+    expect(report.medianRequestToArrivalMinutes).toBe(18);
+    expect(report.remoteResolutionRate).toBe(0);
+    expect(report.rulesVersion).toBeTruthy();
 
-    // 3. The read model agrees with the spine's terminal state.
-    expect((await requests.get(request.id))?.status).toBe("closed");
+    // 3. Reconciliation: the projection agrees with the spine.
+    const projection = await requests.get(request.id);
+    expect(reconcileRequest(timeline, projection)).toEqual({ consistent: true, status: "closed" });
   });
 });

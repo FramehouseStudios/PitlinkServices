@@ -10,9 +10,11 @@
 - **Version:** 0.1.0
 - **Prepared:** 2026-08-26
 - **Repository:** `FramehouseStudios/PitlinkServices`
-- **Status:** Phase 0 — Foundation. Increments 1–7 complete; 9 next (8 is
-  Phase 1-gated, 12 needs founder pricing + Stripe keys). The Phase 0 exit
-  criterion passes as an executable test (`src/phase0.exit.test.ts`).
+- **Status:** Phase 0 — Foundation. Increments 1–7 and 9–10 complete; 11
+  (observability) next. Gated: 8 (live providers — Phase 1), 12 (first paid
+  path — founder pricing + Stripe keys). The Phase 0 exit criterion passes as
+  an executable test (`src/phase0.exit.test.ts`), now including tracking and
+  the versioned metric rules.
 
 ---
 
@@ -243,3 +245,10 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   (docs/intel/roadside-app-review.md): mine don't merge; vehicles +
   post-resolution feedback added to backlog; bidding model filed inside the
   pricing RFI. 68/68 tests.
+- **2026-08-26** — Increments 9+10 shipped: TrackingService (assigned-
+  provider-only, en_route-only, throttled pings; ETA basis stored in the
+  event for reproducibility) and the versioned metric rules + reconciliation
+  (`src/common/metrics/`): request→arrival/resolution/match, remote-
+  resolution rate, paid-by-currency, fleet medians; deriveStatus +
+  reconcileRequest report drift, never repair. Exit test now proves
+  "tracked" and computes its numbers through the versioned rules. 76/76.
