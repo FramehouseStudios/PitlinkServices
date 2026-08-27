@@ -19,6 +19,7 @@ import { fleetMetrics, providerRatings } from "../common/metrics/calculations.js
 import { reconcileRequest } from "../common/metrics/reconcile.js";
 import { serviceHealth } from "../reliability/alerts.js";
 import type { ReliabilityService } from "../reliability/service.js";
+import type { ReputationService } from "../reliability/reputation.js";
 import { silentLogger, type Logger } from "../common/logger.js";
 import type { PrincipalType } from "../common/auth/principals.js";
 
@@ -39,6 +40,8 @@ export interface ApiDeps {
   requests: RequestService;
   /** Optional: enables GET /ops/health and POST /ops/sweep. */
   reliability?: ReliabilityService;
+  /** Optional: enables GET /ops/providers (quality standings). */
+  reputation?: ReputationService;
   presence: ProviderPresence;
   tracking: TrackingService;
   audit: AuthAuditSink;
@@ -210,6 +213,14 @@ export function createApi(deps: ApiDeps): Server {
       const recent = await deps.requests.listRecent(limit);
       const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
       return [200, serviceHealth(timelines)];
+    }
+
+    if (route === "GET /ops/providers") {
+      claims(req, "ops");
+      if (!deps.reputation) throw new HttpError(503, "reputation service not configured");
+      await deps.reputation.refresh();
+      const standings = deps.reputation.list();
+      return [200, { providers: standings, suppressed: standings.filter((p) => p.suppressed).length }];
     }
 
     if (route === "POST /ops/sweep") {

@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (SERVICE RELIABILITY LAYER — no-show recovery,
-match retry, service-health alerts; verified live in a browser; pushed to
+Last updated: 2026-08-26 (Provider quality gating on top of the service
+reliability layer; verified live against real spine data; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -30,7 +30,8 @@ reproducible timeline.
 | — | Post-resolution feedback (backlog 2) | DONE |
 | — | Ops read surface (backlog 3) | DONE |
 | — | Member web surface (backlog 4) | DONE |
-| — | **Service reliability layer** (Blueprint §9 controls) | **DONE** (this hand-off) |
+| — | **Service reliability layer** (Blueprint §9 controls) | DONE |
+| — | **Provider quality gating** | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -348,6 +349,34 @@ service people trust with their safety.
   supply exhausted, recorded `match_failed`. Ops health then reported a
   critical no-show-rate alert computed from those stored events.
 
+### Provider quality gating (2026-08-26)
+
+Reliability records who fails; this acts on it. `src/reliability/reputation.ts`
+folds the spine into per-provider standings (accepted, no-shows, completions,
+no-show rate, rating count/average) and marks a provider `suppressed` with
+named reasons.
+
+**Two safety rules shape the whole design — do not weaken them casually:**
+1. **Minimum sample before suppression** (`minAssignments` 5, `minRatings` 3).
+   A provider's livelihood is at stake and thin supply is fatal to members;
+   one bad night must never end someone's work. Verified live: two providers
+   sitting at a 100% no-show rate with ONE assignment each were correctly
+   left un-suppressed.
+2. **Suppression is a PREFERENCE, not a ban.** If honoring it would leave a
+   member with nobody, matching sends the suppressed provider anyway and
+   records `qualityFallback: true` on the offer event. A late truck beats no
+   truck. Every gate decision is measurable: `qualitySuppressedCount` rides
+   on every offer.
+
+- `ReputationService` caches a snapshot (60s TTL, refreshed on the
+  reliability sweep) so matching stays a fast synchronous decision.
+- `GET /ops/providers` lists standings + suppressed count for ops.
+- All thresholds env-tunable ESTIMATEs (`REPUTATION_*`, documented in
+  `.env.example`) — real values await the density/quality RFIs.
+- Verified live: with the sample floor lowered, the two chronic no-shows
+  flipped to suppressed with the reason `no_show_rate 1.00 > 0.5` attached,
+  while the reliable provider was untouched.
+
 ## THE UNGATED BUILD IS COMPLETE
 
 Everything buildable without founder decisions now exists and is verified:
@@ -394,10 +423,11 @@ surface). Remaining gates: 8 (live providers — Phase 1 physical work),
 
 Founder-gated work (see above), or these ungated service-quality items in
 order:
-1. Proactive member communication: push the ETA and recovery events into a
-   channel the member sees when the page is closed (needs the voice/SMS
-   provider RFI for SMS; in-page is done).
-2. Provider quality gating: exclude providers whose no-show rate or rating
-   crosses a threshold from matching (uses providerRatings + no_show
-   events already on the spine).
-3. Deploy target + JWT secret strength check + provider web surface.
+1. Proactive member communication: push ETA and recovery events into a
+   channel the member sees when the page is closed — NEEDS the voice/SMS
+   provider RFI. In-page is done.
+2. Provider-facing web surface (heartbeat + job view), so a real provider
+   can work without curl. Ungated.
+3. Deploy target selection + JWT secret strength check. Ungated.
+4. Provider standing visible TO the provider (fairness: someone suppressed
+   should know why, from the same numbers ops sees).

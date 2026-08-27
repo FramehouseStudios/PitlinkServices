@@ -15,6 +15,13 @@ export interface MatchingEngineOptions {
   marketplaceEnabled: boolean;
   /** Notified after each new spine event — realtime push. */
   onEvent?: (event: EvidenceEvent) => void;
+  /**
+   * Quality gate: providers the spine shows to be unreliable. Consulted as a
+   * PREFERENCE, not an absolute ban — see match(): if suppressing would
+   * leave a member with nobody, we send the suppressed provider anyway and
+   * record that we did. A late truck beats no truck.
+   */
+  isSuppressed?: (providerId: string) => boolean;
 }
 
 export class MatchingEngine {
@@ -43,9 +50,15 @@ export class MatchingEngine {
     // are never offered it again — a member must not wait on the same truck
     // twice.
     const excluded = await this.previouslyTried(requestId);
-    const candidates = (await this.directory.findCandidates(request.serviceType, request.city)).filter(
+    const available = (await this.directory.findCandidates(request.serviceType, request.city)).filter(
       (p) => !excluded.has(p.id)
     );
+    // Quality gate, applied as a preference: prefer providers in good
+    // standing, but never leave a member stranded to enforce it.
+    const suppressed = this.options.isSuppressed;
+    const preferred = suppressed ? available.filter((p) => !suppressed(p.id)) : available;
+    const usedFallback = preferred.length === 0 && available.length > 0;
+    const candidates = usedFallback ? available : preferred;
     if (candidates.length === 0) {
       // Match failure is metric-affecting (density risk is THE business
       // risk) — it must be measurable, so it goes on the spine.
@@ -71,7 +84,14 @@ export class MatchingEngine {
     const offered = await this.evidence.append({
       requestId,
       eventType: "provider.offered",
-      payload: { providerId: best.provider.id, distanceKm: best.distanceKm },
+      payload: {
+        providerId: best.provider.id,
+        distanceKm: best.distanceKm,
+        // Quality-gate outcome is recorded so both the decision and its
+        // override are measurable from the spine.
+        ...(suppressed ? { qualitySuppressedCount: available.length - preferred.length } : {}),
+        ...(usedFallback ? { qualityFallback: true } : {}),
+      },
       actorType: "system",
       actorId: "matching-engine",
       calculationRulesVersion: CALCULATION_RULES_VERSION,

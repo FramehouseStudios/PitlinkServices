@@ -19,6 +19,7 @@ import { TrackingService } from "./realtime/tracking.js";
 import { createApi } from "./api/server.js";
 import { Logger } from "./common/logger.js";
 import { DEFAULT_POLICY, ReliabilityService } from "./reliability/service.js";
+import { DEFAULT_REPUTATION_POLICY, ReputationService } from "./reliability/reputation.js";
 
 const config = loadConfig(process.env);
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -48,12 +49,30 @@ const requests = new RequestService(
   }
 );
 
+const num = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  const parsed = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const reputation = new ReputationService(requests, {
+  minAssignments: num("REPUTATION_MIN_ASSIGNMENTS", DEFAULT_REPUTATION_POLICY.minAssignments),
+  maxNoShowRate: num("REPUTATION_MAX_NO_SHOW_RATE", DEFAULT_REPUTATION_POLICY.maxNoShowRate),
+  minRatings: num("REPUTATION_MIN_RATINGS", DEFAULT_REPUTATION_POLICY.minRatings),
+  minAvgRating: num("REPUTATION_MIN_AVG_RATING", DEFAULT_REPUTATION_POLICY.minAvgRating),
+});
+await reputation.refresh();
+
 const presence = await RedisProviderPresence.connect(config.redisUrl);
 export const matching = new MatchingEngine(
   new PresenceProviderDirectory(presence),
   requests,
   evidence,
-  { marketplaceEnabled: config.flags.enableProviderMarketplace, onEvent: (e) => bus.publish(e) }
+  {
+    marketplaceEnabled: config.flags.enableProviderMarketplace,
+    onEvent: (e) => bus.publish(e),
+    isSuppressed: (id) => reputation.isSuppressed(id),
+  }
 );
 
 const logger = new Logger({ app: "pitlink" });
@@ -61,11 +80,6 @@ const logger = new Logger({ app: "pitlink" });
 // Service reliability: retry unmatched requests, recover no-shows, escalate
 // silence. Runs in-process on an interval — a cron/worker split is a
 // measured trigger (Blueprint §13), not a day-one requirement.
-const num = (name: string, fallback: number): number => {
-  const raw = process.env[name];
-  const parsed = raw === undefined ? NaN : Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
 const reliability = new ReliabilityService(
   requests,
   matching,
@@ -81,6 +95,7 @@ const reliability = new ReliabilityService(
 );
 const sweepSeconds = Number(process.env.RELIABILITY_SWEEP_SECONDS ?? 30);
 const sweepTimer = setInterval(() => {
+  void reputation.refreshIfStale();
   reliability
     .sweep()
     .then((report) => {
@@ -104,6 +119,7 @@ const api = createApi({
   vehicles: new PostgresVehicleStore(pool),
   requests,
   reliability,
+  reputation,
   presence,
   tracking: new TrackingService(evidence, requests, {}, (e) => bus.publish(e)),
   audit,
