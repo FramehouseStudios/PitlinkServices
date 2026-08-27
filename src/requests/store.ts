@@ -14,6 +14,8 @@ export interface RequestStore {
   setStatus(id: string, from: RequestStatus, to: RequestStatus, at: Date): Promise<boolean>;
   /** Most recently created requests, newest first. Ops/reporting reads. */
   listRecent(limit: number): Promise<RequestRecord[]>;
+  /** Requests currently in any of the given statuses, oldest first. */
+  listByStatus(statuses: RequestStatus[], limit: number): Promise<RequestRecord[]>;
 }
 
 export class InMemoryRequestStore implements RequestStore {
@@ -39,6 +41,14 @@ export class InMemoryRequestStore implements RequestStore {
   async listRecent(limit: number): Promise<RequestRecord[]> {
     return [...this.byId.values()]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+      .map((r) => ({ ...r }));
+  }
+
+  async listByStatus(statuses: RequestStatus[], limit: number): Promise<RequestRecord[]> {
+    return [...this.byId.values()]
+      .filter((r) => statuses.includes(r.status))
+      .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
       .slice(0, limit)
       .map((r) => ({ ...r }));
   }
@@ -101,6 +111,14 @@ export class PostgresRequestStore implements RequestStore {
     const result = await this.pool.query<Row>(
       "SELECT * FROM requests ORDER BY created_at DESC LIMIT $1",
       [limit]
+    );
+    return result.rows.map(toRecord);
+  }
+
+  async listByStatus(statuses: RequestStatus[], limit: number): Promise<RequestRecord[]> {
+    const result = await this.pool.query<Row>(
+      "SELECT * FROM requests WHERE status = ANY($1) ORDER BY updated_at LIMIT $2",
+      [statuses, limit]
     );
     return result.rows.map(toRecord);
   }

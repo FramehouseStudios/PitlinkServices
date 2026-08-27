@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-26 (Member web surface complete — full journey verified
-live in a browser; pushed to
+Last updated: 2026-08-26 (SERVICE RELIABILITY LAYER — no-show recovery,
+match retry, service-health alerts; verified live in a browser; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -29,7 +29,8 @@ reproducible timeline.
 | — | Vehicles bounded context (backlog 1) | **DONE** (this hand-off) |
 | — | Post-resolution feedback (backlog 2) | DONE |
 | — | Ops read surface (backlog 3) | DONE |
-| — | Member web surface (backlog 4) | **DONE** (this hand-off) |
+| — | Member web surface (backlog 4) | DONE |
+| — | **Service reliability layer** (Blueprint §9 controls) | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -304,6 +305,49 @@ reproducible timeline.
 - Repo path contains a space: use `fileURLToPath(new URL(...))`, never
   `new URL(...).pathname` (bit us — %20).
 
+### Service reliability layer (CEO decision, 2026-08-26)
+
+**Why this over anything else:** world-class roadside service is not won on
+the happy path — it is won when nobody comes and nobody tells you. Before
+this, a no-show provider stranded a member on a "Matched" screen forever;
+one failed match ended the search permanently. Blueprint §9 names these as
+required controls. All ungated. This is the difference between a demo and a
+service people trust with their safety.
+
+- `ReliabilityService.sweep()` (`src/reliability/service.ts`) runs every
+  RELIABILITY_SWEEP_SECONDS (default 30, in-process — a worker split is a
+  measured trigger, not a day-one need) over triaged/matched/en_route
+  requests:
+  - **Nobody found:** retries matching once per `rematchIntervalSeconds`
+    bucket (idempotent by bucket, so sweep frequency ≠ retry frequency);
+    after `unmatchedEscalationSeconds` emits `request.escalated` ONCE.
+  - **Provider never starts** (matched → no en_route within
+    `acceptToEnRouteSeconds`) **or never arrives** (en_route beyond
+    `enRouteToArrivalSeconds`): emits `provider.no_show` +
+    `provider.unassigned`, returns the request to `triaged`, and the next
+    sweep rematches it.
+- **Assignment semantics changed:** `assignedProvider()` now honors
+  `provider.unassigned` (a later unassign clears an earlier accept), and the
+  matching engine EXCLUDES every previously offered/accepted provider on
+  that request — a member never waits on the same failed truck twice.
+- State machine gained `matched → triaged` and `en_route → triaged` purely
+  as recovery edges.
+- All policy thresholds are env-tunable (RELIABILITY_*) — ESTIMATEs, not
+  hard-coded commercial decisions.
+- `serviceHealth()` (`src/reliability/alerts.ts`): median arrival, match-
+  failure rate, no-show rate, escalation count → alerts with observed vs
+  threshold and severity. **Silent below `minSample` (5)** — alerting on
+  three data points is theater. Thresholds are ESTIMATEs pending the density
+  RFI. Served at `GET /ops/health`; `POST /ops/sweep` forces a pass.
+- Member UI tells the truth immediately: "Your provider fell through —
+  finding another", "A Pitlink operator is now on this".
+- **Verified live in a browser:** member requested a tow → matched to the
+  nearest provider → that provider never moved → the page showed the
+  fall-through message and re-matched to a DIFFERENT provider automatically,
+  no member action; when that one also stalled it recovered again and, with
+  supply exhausted, recorded `match_failed`. Ops health then reported a
+  critical no-show-rate alert computed from those stored events.
+
 ## THE UNGATED BUILD IS COMPLETE
 
 Everything buildable without founder decisions now exists and is verified:
@@ -348,6 +392,12 @@ The Delivery Plan's ungated increments are COMPLETE (1–7, 9–11 + provider
 surface). Remaining gates: 8 (live providers — Phase 1 physical work),
 12 (first paid path — founder pricing + Stripe keys [ABSOLUTELY-HUMAN]).
 
-With the ungated build complete, next work is founder-gated (see above) or
-polish: deploy target selection, JWT secret strength check, provider web
-surface (heartbeat UI), member feedback UI on the tracking view.
+Founder-gated work (see above), or these ungated service-quality items in
+order:
+1. Proactive member communication: push the ETA and recovery events into a
+   channel the member sees when the page is closed (needs the voice/SMS
+   provider RFI for SMS; in-page is done).
+2. Provider quality gating: exclude providers whose no-show rate or rating
+   crosses a threshold from matching (uses providerRatings + no_show
+   events already on the spine).
+3. Deploy target + JWT secret strength check + provider web surface.

@@ -39,7 +39,13 @@ export class MatchingEngine {
       return { matched: false, reason: "request_not_triaged" };
     }
 
-    const candidates = await this.directory.findCandidates(request.serviceType, request.city);
+    // Providers already tried on this request (no-shows, prior assignments)
+    // are never offered it again — a member must not wait on the same truck
+    // twice.
+    const excluded = await this.previouslyTried(requestId);
+    const candidates = (await this.directory.findCandidates(request.serviceType, request.city)).filter(
+      (p) => !excluded.has(p.id)
+    );
     if (candidates.length === 0) {
       // Match failure is metric-affecting (density risk is THE business
       // risk) — it must be measurable, so it goes on the spine.
@@ -95,5 +101,18 @@ export class MatchingEngine {
     );
 
     return { matched: true, providerId: best.provider.id, distanceKm: best.distanceKm };
+  }
+
+  /** Provider ids already offered/assigned on this request, per the spine. */
+  private async previouslyTried(requestId: string): Promise<Set<string>> {
+    const timeline = await this.evidence.timeline(requestId);
+    const tried = new Set<string>();
+    for (const event of timeline) {
+      if (event.eventType === "provider.offered" || event.eventType === "provider.accepted") {
+        const id = (event.payload as { providerId?: string }).providerId;
+        if (id) tried.add(id);
+      }
+    }
+    return tried;
   }
 }

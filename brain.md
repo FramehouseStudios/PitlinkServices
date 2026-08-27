@@ -270,6 +270,13 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-26** — SERVICE RELIABILITY LAYER shipped (CEO decision): sweep
+  that retries unmatched requests, recovers provider no-shows (never
+  re-offering a failed provider), and escalates silence to ops; service-
+  health alerts (median arrival, match-failure rate, no-show rate) with a
+  sample floor. Assignment now honors provider.unassigned. Verified live:
+  a stalled provider was detected, the member was told, and the request
+  re-matched to a different provider with no member action. 98/98 tests.
 - **2026-08-26** — Member web surface shipped; THE UNGATED BUILD IS
   COMPLETE. Single static file, no framework, served by the monolith;
   GET /catalog; Phase 0 auto-triage+match orchestration in the entrypoint.

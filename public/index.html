@@ -138,6 +138,11 @@
     "request.resolved": "Resolved",
     "request.closed": "Closed",
     "request.cancelled": "Cancelled",
+    // Recovery events: the member is told the truth, immediately.
+    "request.match_failed": "Still searching for help nearby",
+    "provider.no_show": "Your provider fell through — finding another",
+    "provider.unassigned": "Reassigning",
+    "request.escalated": "A Pitlink operator is now on this",
   };
 
   const renderEvent = (event) => {
@@ -148,6 +153,10 @@
     const li = document.createElement("li");
     li.innerHTML = `<span>${labels[event.eventType] || event.eventType}</span><time>${fmtTime(event.occurredAt)}</time>`;
     $("timeline").prepend(li);
+    if (event.eventType === "provider.no_show") {
+      // Never leave a member staring at a stale "on the way".
+      $("trackEta").textContent = "Finding you another provider now.";
+    }
     const status = event.eventType.replace("request.", "");
     if (["created","triaged","matched","en_route","on_scene","resolved","closed","cancelled"].includes(status)) {
       $("trackStatus").textContent = status.replaceAll("_", " ");

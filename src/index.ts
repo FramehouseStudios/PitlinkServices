@@ -18,6 +18,7 @@ import { attachWs } from "./realtime/ws.js";
 import { TrackingService } from "./realtime/tracking.js";
 import { createApi } from "./api/server.js";
 import { Logger } from "./common/logger.js";
+import { DEFAULT_POLICY, ReliabilityService } from "./reliability/service.js";
 
 const config = loadConfig(process.env);
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -57,6 +58,40 @@ export const matching = new MatchingEngine(
 
 const logger = new Logger({ app: "pitlink" });
 
+// Service reliability: retry unmatched requests, recover no-shows, escalate
+// silence. Runs in-process on an interval — a cron/worker split is a
+// measured trigger (Blueprint §13), not a day-one requirement.
+const num = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  const parsed = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const reliability = new ReliabilityService(
+  requests,
+  matching,
+  evidence,
+  {
+    rematchIntervalSeconds: num("RELIABILITY_REMATCH_SECONDS", DEFAULT_POLICY.rematchIntervalSeconds),
+    unmatchedEscalationSeconds: num("RELIABILITY_ESCALATE_SECONDS", DEFAULT_POLICY.unmatchedEscalationSeconds),
+    acceptToEnRouteSeconds: num("RELIABILITY_START_SECONDS", DEFAULT_POLICY.acceptToEnRouteSeconds),
+    enRouteToArrivalSeconds: num("RELIABILITY_ARRIVAL_SECONDS", DEFAULT_POLICY.enRouteToArrivalSeconds),
+    batchSize: num("RELIABILITY_BATCH", DEFAULT_POLICY.batchSize),
+  },
+  (e) => bus.publish(e)
+);
+const sweepSeconds = Number(process.env.RELIABILITY_SWEEP_SECONDS ?? 30);
+const sweepTimer = setInterval(() => {
+  reliability
+    .sweep()
+    .then((report) => {
+      if (report.rematched || report.noShowsRecovered || report.escalated) {
+        logger.warn("reliability sweep acted", { ...report });
+      }
+    })
+    .catch((err: Error) => logger.error("reliability sweep failed", { detail: err.message }));
+}, sweepSeconds * 1000);
+sweepTimer.unref();
+
 const api = createApi({
   jwtSecret: config.jwtSecret,
   jwtExpiry: config.jwtExpiry,
@@ -68,6 +103,7 @@ const api = createApi({
   ops: new PostgresPrincipalStore(pool, "ops"),
   vehicles: new PostgresVehicleStore(pool),
   requests,
+  reliability,
   presence,
   tracking: new TrackingService(evidence, requests, {}, (e) => bus.publish(e)),
   audit,

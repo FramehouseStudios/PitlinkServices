@@ -227,15 +227,23 @@ export class RequestService {
     return this.requests.listRecent(limit);
   }
 
+  async listByStatus(statuses: RequestStatus[], limit: number): Promise<RequestRecord[]> {
+    return this.requests.listByStatus(statuses, limit);
+  }
+
   async timeline(requestId: string): Promise<EvidenceEvent[]> {
     return this.evidence.timeline(requestId);
   }
 
-  /** Provider assigned by the most recent provider.accepted event, if any. */
+  /**
+   * Provider assigned per the spine: the most recent provider.accepted wins,
+   * unless a provider.unassigned (no-show recovery) came after it.
+   */
   async assignedProvider(requestId: string): Promise<string | null> {
     const timeline = await this.evidence.timeline(requestId);
     for (let i = timeline.length - 1; i >= 0; i--) {
       const event = timeline[i]!;
+      if (event.eventType === "provider.unassigned") return null;
       if (event.eventType === "provider.accepted") {
         return (event.payload as { providerId?: string }).providerId ?? event.actorId;
       }

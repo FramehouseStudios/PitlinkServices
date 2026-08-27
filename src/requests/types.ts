@@ -19,8 +19,8 @@ export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 export const TRANSITIONS: Record<RequestStatus, RequestStatus[]> = {
   created: ["triaged", "cancelled"],
   triaged: ["matched", "resolved", "cancelled"], // resolved = remote close
-  matched: ["en_route", "cancelled"],
-  en_route: ["on_scene", "cancelled"],
+  matched: ["en_route", "triaged", "cancelled"], // → triaged = reassignment
+  en_route: ["on_scene", "triaged", "cancelled"], // → triaged = no-show recovery
   on_scene: ["resolved"],
   resolved: ["closed"],
   closed: [],

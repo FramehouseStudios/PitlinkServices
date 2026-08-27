@@ -17,6 +17,8 @@ import type { TrackingService } from "../realtime/tracking.js";
 import { VehicleValidationError, type Powertrain, type VehicleStore } from "../members/vehicles.js";
 import { fleetMetrics, providerRatings } from "../common/metrics/calculations.js";
 import { reconcileRequest } from "../common/metrics/reconcile.js";
+import { serviceHealth } from "../reliability/alerts.js";
+import type { ReliabilityService } from "../reliability/service.js";
 import { silentLogger, type Logger } from "../common/logger.js";
 import type { PrincipalType } from "../common/auth/principals.js";
 
@@ -35,6 +37,8 @@ export interface ApiDeps {
   ops: PrincipalStore;
   vehicles: VehicleStore;
   requests: RequestService;
+  /** Optional: enables GET /ops/health and POST /ops/sweep. */
+  reliability?: ReliabilityService;
   presence: ProviderPresence;
   tracking: TrackingService;
   audit: AuthAuditSink;
@@ -198,6 +202,20 @@ export function createApi(deps: ApiDeps): Server {
       const recent = await deps.requests.listRecent(limit);
       const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
       return [200, { ...fleetMetrics(timelines), providerRatings: providerRatings(timelines) }];
+    }
+
+    if (route === "GET /ops/health") {
+      claims(req, "ops");
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 500);
+      const recent = await deps.requests.listRecent(limit);
+      const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
+      return [200, serviceHealth(timelines)];
+    }
+
+    if (route === "POST /ops/sweep") {
+      claims(req, "ops");
+      if (!deps.reliability) throw new HttpError(503, "reliability sweep not configured");
+      return [200, await deps.reliability.sweep()];
     }
 
     if (route === "GET /ops/reconciliation") {
