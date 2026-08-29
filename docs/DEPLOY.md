@@ -59,19 +59,58 @@ in-flight requests, closes Redis and PostgreSQL, then exits (15s cap). Any
 platform that sends SIGTERM before SIGKILL will deploy without dropping a
 member mid-request.
 
-## Candidate hosts [RECOMMENDATION — not purchased]
+## Host recommendation [RECOMMENDATION — nothing purchased]
 
-Ordered by least ops burden. All are single-region, which is correct until a
-measured latency/availability trigger (Blueprint §13).
+**Render.** Reasoning, researched 2026-08-27 against primary sources:
 
-1. **Fly.io** — container-native, managed Postgres, Upstash Redis; cheapest
-   path to a real URL. Good default for the beachhead.
-2. **Render** — managed Postgres + Redis in one dashboard, deploy from the
-   repo; slightly more expensive, least fiddly.
-3. **AWS (ECS Fargate + RDS + ElastiCache)** — most control and most ops
-   work. Choose only if compliance or existing credits demand it.
+### The constraint that decides it
 
-Selection, pricing, and the domain are founder decisions.
+The reliability sweep runs **in-process on an interval** — it is what detects
+no-show providers and rescues stranded requests. The host MUST run an
+always-on persistent process. Anything that scales to zero or sleeps idle
+instances silently breaks no-show recovery: the member sees "Matched" forever
+and nobody is rescued. That eliminates Vercel, Netlify, Cloudflare Workers,
+and **Render's own free tier**. Long-lived WebSockets for live tracking rule
+out the same set.
+
+Real choice: Render vs Fly.io. It comes down to the database.
+
+### Why Render
+
+- **Cost on the dominant line item.** Fly Managed Postgres starts at $38/mo
+  (Basic). Render Postgres starts ~$7/mo, with Basic-1GB ~$20/mo — which is
+  what to pick, since the evidence spine grows. Roughly half, all in.
+- **PITR where we need it.** Render's docs confirm point-in-time recovery on
+  ALL paid plans (3-day window on Hobby, 7-day on Pro) plus logical backups
+  retained 7 days. NOTE: a third-party blog claims PITR needs the $95
+  Standard tier — contradicted by Render's own documentation; primary source
+  wins. This matters because `evidence_events` is the only record that can
+  prove anything about the business.
+- **One vendor, one dashboard** for app + Postgres + Redis. A solo founder's
+  scarcest resource is attention. Fly also added billing complexity in 2026
+  (volume snapshots billed per GB; inter-region traffic billed from February).
+- **The LAX argument does not hold.** Fly has a Los Angeles region; Render's
+  nearest is Oregon. But the North Star is measured in MINUTES TO ARRIVAL —
+  20ms of network latency is irrelevant to it, while an afternoon of database
+  ops is not.
+
+### What to provision
+
+- Web service: **paid** starter tier — never the free tier (it sleeps).
+- Postgres: **Basic-1GB** (~$20/mo). Workspace on Hobby to start; upgrade to
+  Pro before the first PAYING member to widen PITR from 3 to 7 days.
+- Key Value (Redis): smallest paid instance.
+- Region: **Oregon**. Deploy from the `Dockerfile` in this repo.
+
+**ESTIMATE ~$35–50/month** all in. Verify at signup; pricing moves.
+
+### When to revisit
+
+If multi-region or edge presence is ever needed, Fly is the better
+architecture. That is a Phase 3 trigger (Blueprint §13), not a today decision.
+
+Sources: https://render.com/docs/postgresql-backups · https://fly.io/docs/mpg/
+· https://fly.io/docs/about/pricing/
 
 ## Multi-instance (not yet)
 
