@@ -88,6 +88,28 @@ describe("matching engine", () => {
     expect(await engine.match(request.id, "attempt-2")).toMatchObject({ matched: true });
   });
 
+  it("bounded evidence: repeated retries record ONE match failure per episode, not one per attempt", async () => {
+    const { engine, evidence, request, directory, requests } = await setup([NEAR]);
+    directory.setAvailable("provider-near", false);
+    // Ten retry attempts against empty supply, as the sweep would do.
+    for (let i = 0; i < 10; i++) {
+      expect(await engine.match(request.id, `retry-${i}`)).toEqual({ matched: false, reason: "no_providers" });
+    }
+    const failures = (await evidence.timeline(request.id)).filter((e) => e.eventType === "request.match_failed");
+    expect(failures).toHaveLength(1);
+
+    // Supply returns and the request matches: the episode closes.
+    directory.setAvailable("provider-near", true);
+    expect(await engine.match(request.id, "recover")).toMatchObject({ matched: true });
+    // A LATER failure (after recovery sent it back to triaged) is
+    // newsworthy again — this is a new episode, not retry noise.
+    await requests.transition(SYSTEM, request.id, "triaged", "back-to-triaged");
+    directory.setAvailable("provider-near", false);
+    await engine.match(request.id, "retry-later");
+    const after = (await evidence.timeline(request.id)).filter((e) => e.eventType === "request.match_failed");
+    expect(after).toHaveLength(2);
+  });
+
   it("failure mode: marketplace flag off → clean refusal, nothing on the spine", async () => {
     const { engine, evidence, request } = await setup([NEAR], false);
     const outcome = await engine.match(request.id, "attempt-1");

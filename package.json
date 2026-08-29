@@ -2,7 +2,7 @@
   "name": "pitlink-services",
   "version": "0.1.0",
   "private": true,
-  "description": "PitlinkServices modular monolith — AI-native mobility assistance platform. Make being stranded a solved problem.",
+  "description": "PitlinkServices modular monolith \u2014 AI-native mobility assistance platform. Make being stranded a solved problem.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "demo": "tsx scripts/demo.ts"
   },
   "dependencies": {
     "pg": "^8.13.1",

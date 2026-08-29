@@ -270,6 +270,12 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-27** — `npm run demo` seeds a realistic LA pilot against a live
+  server (providers online, full journey to 5★, remote case, no-show setup)
+  so the product can be shown in a minute — provider recruitment and investor
+  conversations were blocked on this. It immediately exposed unbounded
+  `match_failed` emission (31,336 events from retry loops); failures are now
+  recorded once per failed episode. 119/119 tests.
 - **2026-08-27** — Ops console shipped (/ops): live health + alerts,
   in-flight sorted needs-a-human-first, provider standings, audited
   interventions (rematch / cancel attributed to the operator). It surfaced

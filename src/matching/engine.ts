@@ -64,7 +64,14 @@ export class MatchingEngine {
     const candidates = usedFallback ? available : preferred;
     if (candidates.length === 0) {
       // Match failure is metric-affecting (density risk is THE business
-      // risk) — it must be measurable, so it goes on the spine.
+      // risk) — it must be measurable, so it goes on the spine. But ONCE per
+      // failed episode, not once per retry: the reliability sweep retries
+      // indefinitely, and re-emitting would grow the spine without bound and
+      // make matchFailureCount meaningless. A new episode starts after any
+      // successful match.
+      if (await this.alreadyFailedThisEpisode(requestId)) {
+        return { matched: false, reason: "no_providers" };
+      }
       const failed = await this.evidence.append({
         requestId,
         eventType: "request.match_failed",
@@ -124,6 +131,20 @@ export class MatchingEngine {
     );
 
     return { matched: true, providerId: best.provider.id, distanceKm: best.distanceKm };
+  }
+
+  /**
+   * True if this request already recorded a match failure that has not been
+   * cleared by a subsequent successful match.
+   */
+  private async alreadyFailedThisEpisode(requestId: string): Promise<boolean> {
+    const timeline = await this.evidence.timeline(requestId);
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const type = timeline[i]!.eventType;
+      if (type === "request.matched") return false; // episode closed
+      if (type === "request.match_failed") return true;
+    }
+    return false;
   }
 
   /** Provider ids already offered/assigned on this request, per the spine. */

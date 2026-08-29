@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-27 (Ops console + TWO severe bug fixes it surfaced:
-auto-triage race and the stuck-`created` blind spot; pushed to
+Last updated: 2026-08-27 (One-command pilot demo (`npm run demo`) + fixed
+unbounded match_failed emission it exposed; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -34,7 +34,8 @@ reproducible timeline.
 | — | **Provider quality gating** | DONE |
 | — | **Provider web surface + self-standing** | DONE |
 | — | **Production readiness** (container, hardening, shutdown) | DONE |
-| — | **Ops console + stranded-request fixes** | **DONE** (this hand-off) |
+| — | **Ops console + stranded-request fixes** | DONE |
+| — | **Pilot demo script + evidence-bloat fix** | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -477,6 +478,29 @@ id (verified live).
 Both regression-tested. Verified live: two requests genuinely stuck in
 `created` (from the race) were force-triaged by the sweep and one immediately
 matched once a provider came online.
+
+### Pilot demo + bounded match-failure evidence (2026-08-27)
+
+Pitlink could not be *shown* to anyone without curl and a walkthrough, which
+blocks the actual bottleneck: recruiting LA providers and raising money.
+`npm run demo` (`scripts/demo.ts`) seeds a realistic pilot against a running
+server — two providers online in Echo Park and Koreatown, a member with a
+vehicle, a full dispatch-to-5★ journey, a remote-resolution case, and a
+dispatch primed to demonstrate no-show recovery — then prints the evidence
+trail and the URLs. Everything is real HTTP against the live system; nothing
+is inserted directly into the database. Re-runnable (accounts are timestamped;
+signup falls back to login).
+
+**Bug the demo exposed immediately: unbounded `match_failed` emission.**
+`/ops/metrics` reported `matchFailureCount: 31336`. The reliability sweep
+retries matching indefinitely and the engine emitted a `request.match_failed`
+event on EVERY attempt — so one stranded request grew the evidence spine
+without bound and made the metric meaningless (and would have poisoned the
+match-failure alert). Fixed: a failure is recorded **once per failed
+episode**, where an episode closes on any successful match. Retries still
+happen, silently; a genuinely new failure after a recovery is still recorded.
+Regression-tested (10 retries → 1 event; new episode → 2). Verified live:
+`matchFailureCount` back to 0 on a clean run.
 
 ## THE UNGATED BUILD IS COMPLETE
 
