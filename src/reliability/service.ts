@@ -14,6 +14,12 @@ import type { RequestService } from "../requests/service.js";
 import type { RequestRecord } from "../requests/types.js";
 
 export interface ReliabilityPolicy {
+  /**
+   * A request stuck in `created` (auto-triage never ran, or crashed) is
+   * force-triaged after this long. Without this a member could wait forever
+   * with nothing watching them. ESTIMATE default 20s.
+   */
+  stuckCreatedSeconds: number;
   /** Retry matching an unmatched request this often. ESTIMATE default 60s. */
   rematchIntervalSeconds: number;
   /** Escalate to ops after this long unmatched. ESTIMATE default 8 min. */
@@ -27,6 +33,7 @@ export interface ReliabilityPolicy {
 }
 
 export const DEFAULT_POLICY: ReliabilityPolicy = {
+  stuckCreatedSeconds: 20,
   rematchIntervalSeconds: 60,
   unmatchedEscalationSeconds: 480,
   acceptToEnRouteSeconds: 300,
@@ -36,6 +43,7 @@ export const DEFAULT_POLICY: ReliabilityPolicy = {
 
 export interface SweepReport {
   examined: number;
+  stuckCreatedRecovered: number;
   rematchAttempted: number;
   rematched: number;
   noShowsRecovered: number;
@@ -58,20 +66,34 @@ export class ReliabilityService {
   async sweep(now: Date = new Date()): Promise<SweepReport> {
     const report: SweepReport = {
       examined: 0,
+      stuckCreatedRecovered: 0,
       rematchAttempted: 0,
       rematched: 0,
       noShowsRecovered: 0,
       escalated: 0,
     };
     const inFlight = await this.requests.listByStatus(
-      ["triaged", "matched", "en_route"],
+      // `created` included deliberately: if orchestration never triaged a
+      // request, NOTHING else would ever look at it again.
+      ["created", "triaged", "matched", "en_route"],
       this.policy.batchSize
     );
     report.examined = inFlight.length;
 
     for (const request of inFlight) {
       const waited = (now.getTime() - request.updatedAt.getTime()) / 1000;
-      if (request.status === "triaged") {
+      if (request.status === "created") {
+        if (waited >= this.policy.stuckCreatedSeconds) {
+          await this.requests.transition(
+            { type: "system", id: "reliability" },
+            request.id,
+            "triaged",
+            `stuck-created:${request.id}`,
+            now
+          );
+          report.stuckCreatedRecovered++;
+        }
+      } else if (request.status === "triaged") {
         await this.handleUnmatched(request, waited, now, report);
       } else if (request.status === "matched") {
         if (waited >= this.policy.acceptToEnRouteSeconds) {

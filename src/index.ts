@@ -32,21 +32,20 @@ const requests = new RequestService(
   evidence,
   new PostgresRequestStore(pool),
   config.serviceTypes,
-  (event) => {
-    bus.publish(event);
-    // Phase 0 orchestration: a new request is auto-triaged and matched
-    // in-process (the conversational agent takes over triage once LLM
-    // routing is decided). A failed match stays measurable on the spine.
-    if (event.eventType === "request.created") {
-      setImmediate(async () => {
-        try {
-          await requests.transition({ type: "system", id: "auto-triage" }, event.requestId, "triaged", `auto:${event.requestId}`);
-          await matching.match(event.requestId, `auto:${event.requestId}`);
-        } catch (err) {
-          logger.error("auto-flow failed", { requestId: event.requestId, detail: (err as Error).message });
-        }
-      });
-    }
+  (event) => bus.publish(event),
+  // Phase 0 orchestration: auto-triage then match. Hangs off onCreated (the
+  // projection exists by then), NOT onEvent — the evidence append precedes
+  // the projection write, and racing it made auto-triage fail silently.
+  // The reliability sweep also force-triages anything stuck in `created`.
+  (record) => {
+    setImmediate(async () => {
+      try {
+        await requests.transition({ type: "system", id: "auto-triage" }, record.id, "triaged", `auto:${record.id}`);
+        await matching.match(record.id, `auto:${record.id}`);
+      } catch (err) {
+        logger.error("auto-flow failed", { requestId: record.id, detail: (err as Error).message });
+      }
+    });
   }
 );
 
@@ -86,6 +85,7 @@ const reliability = new ReliabilityService(
   matching,
   evidence,
   {
+    stuckCreatedSeconds: num("RELIABILITY_STUCK_CREATED_SECONDS", DEFAULT_POLICY.stuckCreatedSeconds),
     rematchIntervalSeconds: num("RELIABILITY_REMATCH_SECONDS", DEFAULT_POLICY.rematchIntervalSeconds),
     unmatchedEscalationSeconds: num("RELIABILITY_ESCALATE_SECONDS", DEFAULT_POLICY.unmatchedEscalationSeconds),
     acceptToEnRouteSeconds: num("RELIABILITY_START_SECONDS", DEFAULT_POLICY.acceptToEnRouteSeconds),
@@ -118,6 +118,7 @@ const api = createApi({
   // output sits a directory deeper and import.meta-relative paths broke.
   webAppPath: resolve(publicDir, "index.html"),
   providerAppPath: resolve(publicDir, "provider.html"),
+  opsAppPath: resolve(publicDir, "ops.html"),
   members: new PostgresPrincipalStore(pool, "member"),
   providers: new PostgresPrincipalStore(pool, "provider"),
   ops: new PostgresPrincipalStore(pool, "ops"),
@@ -125,6 +126,7 @@ const api = createApi({
   requests,
   reliability,
   reputation,
+  matching,
   presence,
   tracking: new TrackingService(evidence, requests, {}, (e) => bus.publish(e)),
   audit,

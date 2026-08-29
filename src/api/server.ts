@@ -33,6 +33,8 @@ export interface ApiDeps {
   webAppPath?: string;
   /** Absolute path to the provider web app HTML; GET /provider serves it. */
   providerAppPath?: string;
+  /** Absolute path to the ops console HTML; GET /ops serves it. */
+  opsAppPath?: string;
   members: PrincipalStore;
   providers: PrincipalStore;
   /** Ops principals are seeded by script (scripts/seed-ops.ts), NEVER
@@ -44,6 +46,8 @@ export interface ApiDeps {
   reliability?: ReliabilityService;
   /** Optional: enables GET /ops/providers (quality standings). */
   reputation?: ReputationService;
+  /** Optional: enables operator-forced rematch. */
+  matching?: { match(requestId: string, attemptKey: string): Promise<unknown> };
   presence: ProviderPresence;
   tracking: TrackingService;
   audit: AuthAuditSink;
@@ -73,6 +77,15 @@ async function readProviderApp(path: string): Promise<string> {
     providerAppCache = await readFile(path, "utf8");
   }
   return providerAppCache;
+}
+
+let opsAppCache: string | null = null;
+async function readOpsApp(path: string): Promise<string> {
+  if (opsAppCache === null) {
+    const { readFile } = await import("node:fs/promises");
+    opsAppCache = await readFile(path, "utf8");
+  }
+  return opsAppCache;
 }
 
 class HttpError extends Error {
@@ -187,6 +200,11 @@ export function createApi(deps: ApiDeps): Server {
       return [200, { __raw: html, contentType: "text/html; charset=utf-8" }];
     }
 
+    if (route === "GET /ops" && deps.opsAppPath) {
+      const html = await readOpsApp(deps.opsAppPath);
+      return [200, { __raw: html, contentType: "text/html; charset=utf-8" }];
+    }
+
     if (route === "GET /catalog") {
       // Public, non-sensitive: what a client needs to render the request form.
       return [200, { serviceTypes: deps.serviceTypes ?? [], defaultCity: deps.defaultCity }];
@@ -221,6 +239,71 @@ export function createApi(deps: ApiDeps): Server {
       const recent = await deps.requests.listRecent(limit);
       const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
       return [200, { ...fleetMetrics(timelines), providerRatings: providerRatings(timelines) }];
+    }
+
+    if (route === "GET /ops/board") {
+      claims(req, "ops");
+      // One call for the whole console: health, what is in flight right now,
+      // what needs a human, and who is working.
+      const recent = await deps.requests.listRecent(100);
+      const timelines = await Promise.all(recent.map((r) => deps.requests.timeline(r.id)));
+      const inFlightRecords = await deps.requests.listByStatus(
+        ["created", "triaged", "matched", "en_route", "on_scene"],
+        100
+      );
+      const nowMs = Date.now();
+      const inFlight = await Promise.all(
+        inFlightRecords.map(async (record) => {
+          const timeline = await deps.requests.timeline(record.id);
+          const created = timeline.find((e) => e.eventType === "request.created");
+          const escalated = timeline.some((e) => e.eventType === "request.escalated");
+          const noShows = timeline.filter((e) => e.eventType === "provider.no_show").length;
+          return {
+            id: record.id,
+            serviceType: record.serviceType,
+            city: record.city,
+            status: record.status,
+            ageMinutes: created ? Math.round((nowMs - created.occurredAt.getTime()) / 60000) : null,
+            providerId: await deps.requests.assignedProvider(record.id),
+            escalated,
+            noShows,
+          };
+        })
+      );
+      // Needs-a-human first, then oldest.
+      inFlight.sort(
+        (a, b) =>
+          Number(b.escalated) - Number(a.escalated) ||
+          b.noShows - a.noShows ||
+          (b.ageMinutes ?? 0) - (a.ageMinutes ?? 0)
+      );
+      let providers: unknown[] = [];
+      if (deps.reputation) {
+        await deps.reputation.refreshIfStale();
+        providers = deps.reputation.list();
+      }
+      return [200, { health: serviceHealth(timelines), inFlight, providers }];
+    }
+
+    const opsRematch = /^POST \/ops\/requests\/([0-9a-f-]{36})\/rematch$/.exec(route);
+    if (opsRematch) {
+      claims(req, "ops");
+      if (!deps.matching) throw new HttpError(503, "matching not configured");
+      // Forces a fresh match attempt; every outcome lands on the spine like
+      // any other match, so an operator's intervention is auditable.
+      return [200, await deps.matching.match(opsRematch[1]!, `ops-rematch:${Date.now()}`)];
+    }
+
+    const opsCancel = /^POST \/ops\/requests\/([0-9a-f-]{36})\/cancel$/.exec(route);
+    if (opsCancel) {
+      const ops = claims(req, "ops");
+      const key = idempotencyKey(req);
+      // Ops cancellation is a privileged write: attributed to the operator,
+      // audited on the spine by the normal transition path.
+      return [
+        200,
+        await deps.requests.transition({ type: "ops", id: ops.sub }, opsCancel[1]!, "cancelled", key),
+      ];
     }
 
     if (route === "GET /ops/health") {

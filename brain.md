@@ -270,6 +270,14 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-27** — Ops console shipped (/ops): live health + alerts,
+  in-flight sorted needs-a-human-first, provider standings, audited
+  interventions (rematch / cancel attributed to the operator). It surfaced
+  TWO severe bugs within minutes: (1) auto-triage raced the projection write
+  because orchestration hung off onEvent — moved to a new onCreated hook;
+  (2) requests stuck in `created` were invisible to the reliability sweep and
+  would have waited forever — the sweep now force-triages them. Both
+  regression-tested; both verified rescued live. 118/118 tests.
 - **2026-08-27** — PRODUCTION READY: Dockerfile (non-root, healthcheck)
   built and run for real; production refuses to start on a weak JWT_SECRET;
   graceful SIGTERM shutdown; docs/DEPLOY.md with three candidate hosts

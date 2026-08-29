@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pitlink Ops</title>
+<style>
+  :root { --ink:#111; --muted:#737373; --line:#e5e5e5; --warn:#b06000; --crit:#b3261e; --ok:#0a7d33; --bg:#fff; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); padding: 24px; }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 32px 0 10px; }
+  .tag { color: var(--muted); font-size: 13px; }
+  section { display: none; } section.on { display: block; }
+  label { display:block; font-size:13px; color:var(--muted); margin:16px 0 4px; }
+  input { width:100%; max-width:320px; padding:10px; font-size:15px; border:1px solid var(--line); border-radius:8px; }
+  button { padding:10px 16px; font-size:14px; font-weight:600; border:0; border-radius:8px; background:var(--ink); color:#fff; cursor:pointer; }
+  button.small { padding:5px 10px; font-size:12px; font-weight:500; background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button.small:hover { background:#f5f5f5; }
+  .err { color: var(--crit); font-size: 14px; margin-top: 12px; min-height: 20px; }
+  .stats { display:flex; gap:28px; flex-wrap:wrap; margin-top:6px; }
+  .stat b { display:block; font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  .stat span { font-size:12px; color:var(--muted); }
+  .alert { border-left:3px solid var(--warn); padding:8px 12px; margin-top:8px; font-size:14px; background:#fdf8f0; }
+  .alert.critical { border-color:var(--crit); background:#fdf3f2; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th { text-align:left; font-size:12px; color:var(--muted); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tr.attention td { background:#fdf3f2; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#f2f2f2; }
+  .pill.escalated { background:var(--crit); color:#fff; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--muted); }
+  .empty { color:var(--muted); font-size:14px; padding:12px 0; }
+  .head { display:flex; justify-content:space-between; align-items:baseline; }
+</style>
+</head>
+<body>
+<main>
+  <div class="head"><h1>Pitlink Ops</h1><span class="tag" id="updated"></span></div>
+
+  <section id="auth" class="on">
+    <label for="email">Ops email</label>
+    <input id="email" type="email" autocomplete="email">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <p style="margin-top:20px"><button id="signin">Sign in</button></p>
+    <p class="tag" style="margin-top:12px">Ops accounts are seeded, never self-signup.</p>
+    <p class="err" id="authErr"></p>
+  </section>
+
+  <section id="board">
+    <h2>Service health</h2>
+    <div class="stats" id="stats"></div>
+    <div id="alerts"></div>
+
+    <h2>In flight — needs attention first</h2>
+    <div id="inflight"></div>
+
+    <h2>Providers</h2>
+    <div id="providers"></div>
+
+    <p style="margin-top:28px"><button id="sweep">Run reliability sweep now</button>
+    <button id="logout" class="small" style="margin-left:8px">Sign out</button></p>
+    <p class="err" id="boardErr"></p>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => { for (const s of document.querySelectorAll("section")) s.classList.remove("on"); $(id).classList.add("on"); };
+  let token = null, timer = null;
+  try { token = localStorage.getItem("pitlink_ops_token"); } catch {}
+
+  const api = async (method, path, body, key) => {
+    const res = await fetch(path, {
+      method,
+      headers: { "content-type": "application/json",
+        ...(token ? { authorization: "Bearer " + token } : {}),
+        ...(key ? { "idempotency-key": key } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ("error " + res.status));
+    return json;
+  };
+
+  $("signin").onclick = async () => {
+    $("authErr").textContent = "";
+    try {
+      const r = await api("POST", "/ops/login", { email: $("email").value, password: $("password").value });
+      token = r.token;
+      try { localStorage.setItem("pitlink_ops_token", token); } catch {}
+      start();
+    } catch (err) { $("authErr").textContent = err.message; }
+  };
+  $("logout").onclick = () => {
+    clearInterval(timer); token = null;
+    try { localStorage.removeItem("pitlink_ops_token"); } catch {}
+    show("auth");
+  };
+
+  $("sweep").onclick = async () => {
+    $("boardErr").textContent = "";
+    try {
+      const r = await api("POST", "/ops/sweep");
+      $("boardErr").style.color = "var(--ok)";
+      $("boardErr").textContent = `Swept ${r.examined}: ${r.rematched} rematched, ${r.noShowsRecovered} no-shows recovered, ${r.escalated} escalated.`;
+      refresh();
+    } catch (err) { $("boardErr").style.color = "var(--crit)"; $("boardErr").textContent = err.message; }
+  };
+
+  const act = async (id, what) => {
+    $("boardErr").textContent = "";
+    try {
+      if (what === "rematch") await api("POST", `/ops/requests/${id}/rematch`);
+      else await api("POST", `/ops/requests/${id}/cancel`, undefined, crypto.randomUUID());
+      refresh();
+    } catch (err) { $("boardErr").style.color = "var(--crit)"; $("boardErr").textContent = err.message; }
+  };
+  window.__opsAct = act;
+
+  const pct = (v) => (v === null || v === undefined ? "—" : (v * 100).toFixed(0) + "%");
+  const mins = (v) => (v === null || v === undefined ? "—" : v.toFixed(0) + "m");
+
+  const renderHealth = (h) => {
+    $("stats").innerHTML = [
+      ["Median arrival", mins(h.medianArrivalMinutes)],
+      ["Match failures", pct(h.matchFailureRate)],
+      ["No-show rate", pct(h.noShowRate)],
+      ["Escalations", h.escalationCount],
+      ["Sample", h.sample],
+    ].map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+    $("alerts").innerHTML = h.insufficientData
+      ? `<p class="tag" style="margin-top:10px">Below the alerting sample floor — numbers shown, no alerts raised.</p>`
+      : h.alerts.length === 0
+        ? `<p class="tag" style="margin-top:10px">No alerts. Service within targets.</p>`
+        : h.alerts.map((a) => `<div class="alert ${a.severity === "critical" ? "critical" : ""}">
+            <b>${a.severity.toUpperCase()}</b> ${a.metric.replaceAll("_", " ")} —
+            observed ${typeof a.observed === "number" && a.observed < 1 ? pct(a.observed) : a.observed.toFixed(1)},
+            threshold ${typeof a.threshold === "number" && a.threshold < 1 ? pct(a.threshold) : a.threshold}</div>`).join("");
+  };
+
+  const renderInFlight = (rows) => {
+    if (rows.length === 0) { $("inflight").innerHTML = `<p class="empty">Nothing in flight.</p>`; return; }
+    $("inflight").innerHTML = `<table><thead><tr>
+      <th>Request</th><th>Service</th><th>Status</th><th>Age</th><th>Provider</th><th></th></tr></thead><tbody>` +
+      rows.map((r) => `<tr class="${r.escalated || r.noShows > 0 ? "attention" : ""}">
+        <td class="mono">${r.id.slice(0, 8)}${r.escalated ? ' <span class="pill escalated">escalated</span>' : ""}${r.noShows > 0 ? ` <span class="pill">${r.noShows} no-show</span>` : ""}</td>
+        <td>${r.serviceType.replaceAll("_", " ")}</td>
+        <td><span class="pill">${r.status.replaceAll("_", " ")}</span></td>
+        <td>${r.ageMinutes === null ? "—" : r.ageMinutes + "m"}</td>
+        <td class="mono">${r.providerId ? r.providerId.slice(0, 8) : "—"}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="small" onclick="__opsAct('${r.id}','rematch')">Rematch</button>
+          <button class="small" onclick="__opsAct('${r.id}','cancel')">Cancel</button></td>
+      </tr>`).join("") + "</tbody></table>";
+  };
+
+  const renderProviders = (rows) => {
+    if (rows.length === 0) { $("providers").innerHTML = `<p class="empty">No provider history yet.</p>`; return; }
+    $("providers").innerHTML = `<table><thead><tr>
+      <th>Provider</th><th>Accepted</th><th>Completed</th><th>No-shows</th><th>Rating</th><th>Standing</th></tr></thead><tbody>` +
+      rows.map((p) => `<tr class="${p.suppressed ? "attention" : ""}">
+        <td class="mono">${p.providerId.slice(0, 8)}</td>
+        <td>${p.accepted}</td><td>${p.completed}</td><td>${p.noShows}</td>
+        <td>${p.avgRating === null ? "—" : p.avgRating.toFixed(1) + " ★"}</td>
+        <td>${p.suppressed ? `<span class="pill escalated">suppressed</span> <span class="tag">${p.suppressionReasons.join("; ")}</span>` : "good"}</td>
+      </tr>`).join("") + "</tbody></table>";
+  };
+
+  const refresh = async () => {
+    try {
+      const board = await api("GET", "/ops/board");
+      renderHealth(board.health);
+      renderInFlight(board.inFlight);
+      renderProviders(board.providers);
+      $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+    } catch (err) {
+      if (String(err.message).includes("401")) { $("logout").click(); return; }
+      $("boardErr").style.color = "var(--crit)";
+      $("boardErr").textContent = err.message;
+    }
+  };
+
+  const start = () => { show("board"); refresh(); timer = setInterval(refresh, 5000); };
+  if (token) start();
+})();
+</script>
+</body>
+</html>

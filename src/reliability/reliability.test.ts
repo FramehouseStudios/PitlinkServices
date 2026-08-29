@@ -43,6 +43,53 @@ async function triagedRequest(requests: RequestService, at = t(0)) {
   return record;
 }
 
+describe("reliability sweep — the request nobody picked up", () => {
+  it("SAFETY: a request stuck in `created` is force-triaged — a member is never left unwatched", async () => {
+    const { requests, reliability } = await setup([provider("p1")]);
+    // Created but never triaged (orchestration crashed, or raced).
+    const record = await requests.create(
+      MEMBER,
+      { serviceType: "tow", city: "los-angeles", lat: 34.05, lng: -118.24 },
+      "stuck",
+      t(0)
+    );
+    expect(record.status).toBe("created");
+    // Inside the grace window: untouched.
+    expect(await reliability.sweep(t(0))).toMatchObject({ stuckCreatedRecovered: 0 });
+    // Past it: rescued into the normal pipeline.
+    expect(await reliability.sweep(t(1))).toMatchObject({ stuckCreatedRecovered: 1 });
+    expect((await requests.get(record.id))?.status).toBe("triaged");
+    // And the next sweep matches it like any other request.
+    await reliability.sweep(t(3));
+    expect(await requests.assignedProvider(record.id)).toBe("p1");
+  });
+
+  it("regression: orchestration hangs off onCreated, so the projection always exists when it fires", async () => {
+    const evidence = new InMemoryEvidenceStore();
+    const store = new InMemoryRequestStore();
+    const seen: (string | null)[] = [];
+    const service: RequestService = new RequestService(
+      evidence,
+      store,
+      DEFAULT_SERVICE_TYPES,
+      undefined,
+      (record) => {
+        // The bug: an onEvent consumer ran before insert() and saw null here.
+        seen.push(record.id);
+      }
+    );
+    const record = await service.create(
+      MEMBER,
+      { serviceType: "tow", city: "los-angeles", lat: 34.05, lng: -118.24 },
+      "onCreated",
+      t(0)
+    );
+    expect(seen).toEqual([record.id]);
+    // Projection is readable at the moment the hook fires.
+    expect(await store.findById(record.id)).not.toBeNull();
+  });
+});
+
 describe("reliability sweep — nobody is found", () => {
   it("retries matching until supply appears, then matches", async () => {
     const { requests, directory, reliability } = await setup([]);

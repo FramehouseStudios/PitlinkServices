@@ -38,7 +38,14 @@ export class RequestService {
     private readonly requests: RequestStore,
     private readonly serviceTypes: readonly string[],
     /** Notified after each NEW spine event (replays excluded) — realtime push. */
-    private readonly onEvent?: (event: EvidenceEvent) => void
+    private readonly onEvent?: (event: EvidenceEvent) => void,
+    /**
+     * Notified after a new request is fully persisted (evidence AND
+     * projection). Orchestration must hang off THIS, not onEvent: the
+     * evidence append happens first by design, so a consumer of onEvent can
+     * race ahead of the projection row and fail to find the request.
+     */
+    private readonly onCreated?: (record: RequestRecord) => void
   ) {}
 
   async create(
@@ -101,6 +108,7 @@ export class RequestService {
       updatedAt: now,
     };
     await this.requests.insert(record);
+    this.onCreated?.(record);
     return record;
   }
 
@@ -283,6 +291,7 @@ export class RequestService {
       updatedAt: event.occurredAt,
     };
     await this.requests.insert(record);
+    this.onCreated?.(record);
     return record;
   }
 }

@@ -44,7 +44,9 @@ beforeAll(async () => {
     serviceTypes: DEFAULT_SERVICE_TYPES,
     webAppPath: fileURLToPath(new URL("../../public/index.html", import.meta.url)),
     providerAppPath: fileURLToPath(new URL("../../public/provider.html", import.meta.url)),
+    opsAppPath: fileURLToPath(new URL("../../public/ops.html", import.meta.url)),
     reputation: reputationService,
+    matching: { match: (id, key) => engine.match(id, key) },
     members: new InMemoryPrincipalStore("member"),
     providers: new InMemoryPrincipalStore("provider"),
     ops: opsStore,
@@ -428,6 +430,83 @@ describe("member API", () => {
     await engine.match(id, "own-m");
     expect((await call("GET", "/providers/jobs/current", { token: a.json.token })).json.job).toMatchObject({ id });
     expect((await call("GET", "/providers/jobs/current", { token: b.json.token })).json.job).toBeNull();
+  });
+
+  it("ops console: serves the page and one board call carries health, in-flight, providers", async () => {
+    const { hashPassword } = await import("../common/auth/password.js");
+    await opsStore.create("board@pitlink.com", await hashPassword("correct-horse")).catch(() => {});
+    const opsToken = (await call("POST", "/ops/login", {
+      body: { email: "board@pitlink.com", password: "correct-horse" },
+    })).json.token as string;
+
+    const page = await fetch(`${base}/ops`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Pitlink Ops");
+
+    // An in-flight request with an escalation must sort to the top.
+    const memberToken = await signup("board-member@example.com");
+    const created = await call("POST", "/requests", {
+      token: memberToken, key: "board-1", body: { serviceType: "tow", lat: 34.05, lng: -118.24 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "board-t");
+
+    const board = await call("GET", "/ops/board", { token: opsToken });
+    expect(board.status).toBe(200);
+    expect(board.json.health).toHaveProperty("alerts");
+    expect(board.json.inFlight.some((r: any) => r.id === id && r.status === "triaged")).toBe(true);
+    const row = board.json.inFlight.find((r: any) => r.id === id);
+    expect(row).toMatchObject({ escalated: false, noShows: 0, providerId: null });
+    expect(typeof row.ageMinutes).toBe("number");
+    expect(Array.isArray(board.json.providers)).toBe(true);
+  });
+
+  it("ops interventions are audited on the spine and attributed to the operator", async () => {
+    const { hashPassword } = await import("../common/auth/password.js");
+    await opsStore.create("acting@pitlink.com", await hashPassword("correct-horse")).catch(() => {});
+    const login = await call("POST", "/ops/login", {
+      body: { email: "acting@pitlink.com", password: "correct-horse" },
+    });
+    const opsToken = login.json.token as string;
+
+    const memberToken = await signup("acted-on@example.com");
+    const created = await call("POST", "/requests", {
+      token: memberToken, key: "act-1", body: { serviceType: "tow", lat: 34.05, lng: -118.24 },
+    });
+    const id = created.json.id as string;
+    await requests.transition({ type: "system", id: "t" }, id, "triaged", "act-t");
+
+    // Forced rematch: outcome recorded like any other match attempt.
+    const rematch = await call("POST", `/ops/requests/${id}/rematch`, { token: opsToken });
+    expect(rematch.status).toBe(200);
+
+    // Ops cancel: attributed to the operator, on the spine.
+    const cancelled = await call("POST", `/ops/requests/${id}/cancel`, { token: opsToken, key: "act-c" });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.json.status).toBe("cancelled");
+    const timeline = await requests.timeline(id);
+    const cancelEvent = timeline.find((e) => e.eventType === "request.cancelled")!;
+    expect(cancelEvent.actorType).toBe("ops");
+    expect(cancelEvent.actorId).toBeTruthy();
+  });
+
+  it("adversarial: members and providers cannot reach the ops board or intervene", async () => {
+    const memberToken = await signup("nosy-board@example.com");
+    const pro = await call("POST", "/providers/signup", {
+      body: { email: "nosy-board-pro@example.com", password: "correct-horse" },
+    });
+    const created = await call("POST", "/requests", {
+      token: memberToken, key: "nb-1", body: { serviceType: "tow", lat: 34, lng: -118 },
+    });
+    const id = created.json.id as string;
+    for (const token of [memberToken, pro.json.token]) {
+      expect((await call("GET", "/ops/board", { token })).status).toBe(401);
+      expect((await call("POST", `/ops/requests/${id}/rematch`, { token })).status).toBe(401);
+      expect((await call("POST", `/ops/requests/${id}/cancel`, { token, key: "x" })).status).toBe(401);
+      expect((await call("POST", "/ops/sweep", { token })).status).toBe(401);
+    }
+    // The request is untouched by the attempts.
+    expect((await call("GET", `/requests/${id}`, { token: memberToken })).json.status).toBe("created");
   });
 
   it("failure mode: oversized and malformed bodies are rejected cleanly", async () => {

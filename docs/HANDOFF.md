@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-27 (PRODUCTION READY: container built and run,
-hardened config, graceful shutdown, docs/DEPLOY.md; pushed to
+Last updated: 2026-08-27 (Ops console + TWO severe bug fixes it surfaced:
+auto-triage race and the stuck-`created` blind spot; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -33,7 +33,8 @@ reproducible timeline.
 | — | **Service reliability layer** (Blueprint §9 controls) | DONE |
 | — | **Provider quality gating** | DONE |
 | — | **Provider web surface + self-standing** | DONE |
-| — | **Production readiness** (container, hardening, shutdown) | **DONE** (this hand-off) |
+| — | **Production readiness** (container, hardening, shutdown) | DONE |
+| — | **Ops console + stranded-request fixes** | **DONE** (this hand-off) |
 | 12 | First end-to-end paid path in DEFAULT_CITY | pending (needs founder: pricing + Stripe keys) |
 
 ## Decisions made (do not re-litigate)
@@ -445,6 +446,37 @@ blocker is now removed.
   dependencies ok, both web apps 200, member signup + request created,
   auto-triage ran, and `match_failed` recorded correctly (no providers
   online) — the full stack works from an image.
+
+### Ops console + two severe bug fixes (2026-08-27)
+
+Escalations were firing into a JSON endpoint nobody watches. `public/ops.html`
+(`GET /ops`) closes the loop: live service health with alerts, in-flight
+requests sorted **needs-a-human first** (escalated → no-shows → oldest),
+provider standings, and audited interventions. `GET /ops/board` serves it in
+one call. Operator actions: force sweep, force rematch, ops cancel —
+`request.cancelled` lands on the spine attributed to the operator's principal
+id (verified live).
+
+**The console found two real bugs within minutes of first use:**
+
+1. **Auto-triage race.** Orchestration hung off the `onEvent` hook, which
+   fires when the `request.created` EVIDENCE is appended — before the
+   projection row is written (evidence-before-side-effects, by design). Under
+   real Postgres latency `transition()` then failed with "not found" and
+   auto-triage silently died. Fixed: `RequestService` gained an `onCreated`
+   hook that fires after BOTH writes; orchestration hangs off that.
+   **Rule for future agents: never drive orchestration from `onEvent`.**
+2. **`created` was invisible to every safety net** (severe). The reliability
+   sweep covered `triaged/matched/en_route` only, so a request that failed to
+   auto-triage would sit in `created` forever — no dispatch, no retry, no
+   escalation, nobody told. The worst possible failure for this business.
+   Fixed: the sweep now includes `created` and force-triages anything past
+   `stuckCreatedSeconds` (ESTIMATE 20s, env-tunable). Defense in depth: even
+   if orchestration dies entirely, every member still gets picked up.
+
+Both regression-tested. Verified live: two requests genuinely stuck in
+`created` (from the race) were force-triaged by the sweep and one immediately
+matched once a provider came online.
 
 ## THE UNGATED BUILD IS COMPLETE
 
