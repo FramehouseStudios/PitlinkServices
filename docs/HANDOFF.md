@@ -1,7 +1,7 @@
 # HANDOFF — current state and next task
 
-Last updated: 2026-08-27 (One-command pilot demo (`npm run demo`) + fixed
-unbounded match_failed emission it exposed; pushed to
+Last updated: 2026-08-27 (HOST CHOSEN: Render. render.yaml Blueprint added;
+fixed a migration path bug that would have broken the first deploy; pushed to
 https://github.com/FramehouseStudios/PitlinkServices)
 
 ## Phase status
@@ -501,6 +501,36 @@ episode**, where an episode closes on any successful match. Retries still
 happen, silently; a genuinely new failure after a recovery is still recorded.
 Regression-tested (10 retries → 1 event; new episode → 2). Verified live:
 `matchFailureCount` back to 0 on a clean run.
+
+### Host decision + Render Blueprint (2026-08-27)
+
+**[DECIDED — founder, 2026-08-27] Host: Render.** Reasoning and sources in
+`docs/DEPLOY.md`. The deciding constraint came from our own architecture: the
+reliability sweep runs in-process on an interval, so the host must run an
+always-on process — anything that scales to zero (or Render's free tier,
+which sleeps) silently stops no-show recovery.
+
+- `render.yaml` is a Render Blueprint: provisions web + Postgres + Key Value,
+  wires connection strings, generates a 256-bit `JWT_SECRET` via
+  `generateValue` (no human ever handles it), and runs migrations via
+  `preDeployCommand` on every deploy. Founder applies it from the dashboard;
+  Render confirms cost before creating anything.
+- Plan IDs use the CURRENT instance-type identifiers (`0.5c-512mb` web,
+  `0.5c-1g` Postgres, `256mb` Key Value). Legacy names (`starter`,
+  `basic-1gb`) are NOT in the current Blueprint spec and would fail to apply —
+  I had written those first and corrected them against Render's docs.
+- **Bug fixed that would have broken the first deploy:** `scripts/migrate.ts`
+  resolved the migrations directory from `import.meta.dirname`, so compiled
+  output at `dist/scripts/` looked in `dist/migrations` — which does not
+  exist in the image. Now resolved from `process.cwd()` (override:
+  `MIGRATIONS_DIR`). Verified by running `node dist/scripts/migrate.js`
+  inside the built container. Same class of bug as the earlier `PUBLIC_DIR`
+  one: **never resolve runtime paths from `import.meta.url`.**
+- `preDeployCommand` runs compiled JS, not `npm run migrate` — the runtime
+  image omits devDependencies, so `tsx` is unavailable there.
+- Ops seeding stays manual via the Render Shell
+  (`node dist/scripts/seed-ops.js` with OPS_EMAIL/OPS_PASSWORD) — the
+  password must never enter `render.yaml`.
 
 ## THE UNGATED BUILD IS COMPLETE
 

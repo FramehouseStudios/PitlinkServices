@@ -270,6 +270,13 @@ Also update `docs/HANDOFF.md` and append a §9 entry.
   only (no signup route — tested absent), /ops/login, /ops/metrics (versioned
   rules over recent timelines), /ops/reconciliation (drift surfaced, never
   repaired). Live-verified: 18 requests in local DB, 18 consistent. 87/87.
+- **2026-08-27** — **[DECIDED — founder] Host: Render.** Added `render.yaml`
+  Blueprint (web + Postgres + Key Value, generated JWT secret, migrations via
+  preDeployCommand) with current instance-type plan IDs. Fixed a migration
+  path bug that would have broken the first deploy (compiled output looked
+  for `dist/migrations`); verified by running the migrator inside the built
+  image. Standing rule reinforced: never resolve runtime paths from
+  `import.meta.url`.
 - **2026-08-27** — `npm run demo` seeds a realistic LA pilot against a live
   server (providers online, full journey to 5★, remote case, no-show setup)
   so the product can be shown in a minute — provider recruitment and investor

@@ -2,7 +2,7 @@
 // order, recording applied files in schema_migrations. No down migrations:
 // the evidence spine is append-only and so is the schema history.
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import pg from "pg";
 import { loadConfig } from "../src/common/config.js";
 
@@ -17,7 +17,10 @@ try {
        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
      )`
   );
-  const dir = join(import.meta.dirname, "..", "migrations");
+  // Resolved from the working directory, not from this file: compiled output
+  // lives a directory deeper (dist/scripts/), so an import.meta-relative path
+  // points at dist/migrations, which does not exist in the container.
+  const dir = process.env.MIGRATIONS_DIR ?? resolve(process.cwd(), "migrations");
   const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
   for (const file of files) {
     const { rowCount } = await client.query(
@@ -25,7 +28,7 @@ try {
       [file]
     );
     if (rowCount) continue;
-    const sql = await readFile(join(dir, file), "utf8");
+    const sql = await readFile(resolve(dir, file), "utf8");
     await client.query("BEGIN");
     try {
       await client.query(sql);

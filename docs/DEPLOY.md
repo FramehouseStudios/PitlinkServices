@@ -37,18 +37,29 @@ ops. Generate one with `openssl rand -base64 48`.
 Optional tuning (all ESTIMATEs, see `.env.example`): `RELIABILITY_*`,
 `REPUTATION_*`, `SERVICE_TYPES`, `PUBLIC_DIR`, `PORT`.
 
-## Deploy steps
+## Deploy steps — Render (chosen 2026-08-27)
 
-```bash
-docker build -t pitlink:latest .
-# 1. Run migrations once against the production database:
-DATABASE_URL=... REDIS_URL=... JWT_SECRET=... JWT_EXPIRY=1h \
-  DEFAULT_CITY=los-angeles ENABLE_PREDICTIVE_ALERTS=false \
-  ENABLE_PROVIDER_MARKETPLACE=true npm run migrate
-# 2. Start the container with the environment above.
-# 3. Seed the first ops account (never self-signup):
-OPS_EMAIL=you@pitlink.com OPS_PASSWORD='...' npx tsx scripts/seed-ops.ts
-```
+`render.yaml` in the repo root is a Render Blueprint: it provisions the web
+service, PostgreSQL, and Key Value together, wires the connection strings,
+generates a 256-bit `JWT_SECRET` (no human ever handles it), and runs
+migrations before every deploy.
+
+1. **Render dashboard → New → Blueprint → connect this repo → Apply.**
+   Render shows the cost and asks you to confirm before creating anything.
+2. Wait for the first deploy. `preDeployCommand` runs
+   `node dist/scripts/migrate.js` against the new database — compiled JS, not
+   `npm run migrate`, because the runtime image omits devDependencies.
+3. **Seed the first ops account** (ops principals are never self-signup).
+   In the Render dashboard open the service's **Shell** and run:
+   ```
+   OPS_EMAIL=you@example.com OPS_PASSWORD='<a strong password>' \
+     node dist/scripts/seed-ops.js
+   ```
+   Do not put these in `render.yaml` — the password would be committed.
+4. Visit `/health` (expect 200), then `/`, `/provider`, `/ops`.
+
+To deploy anywhere else instead, the same image runs on any container host —
+see *Required environment* above.
 
 `GET /health` returns 200 when PostgreSQL and Redis are both reachable, 503
 otherwise — point the platform's health check at it. The image also carries
@@ -96,10 +107,10 @@ Real choice: Render vs Fly.io. It comes down to the database.
 
 ### What to provision
 
-- Web service: **paid** starter tier — never the free tier (it sleeps).
-- Postgres: **Basic-1GB** (~$20/mo). Workspace on Hobby to start; upgrade to
+- Web service: `0.5c-512mb` — never `free` (it sleeps, which stops the sweep).
+- Postgres: `0.5c-1g`. Workspace on Hobby to start; upgrade to
   Pro before the first PAYING member to widen PITR from 3 to 7 days.
-- Key Value (Redis): smallest paid instance.
+- Key Value: `256mb`.
 - Region: **Oregon**. Deploy from the `Dockerfile` in this repo.
 
 **ESTIMATE ~$35–50/month** all in. Verify at signup; pricing moves.

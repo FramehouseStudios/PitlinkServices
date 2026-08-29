@@ -44,6 +44,8 @@ an evidence spine before any live marketplace work.
   may be given labeled PROVISIONAL working answers where reversible, but
   never silently finalized.
 - The founder decided the runtime: Node.js + TypeScript [DECIDED 2026-08-26].
+- The founder decided the host: **Render** [DECIDED 2026-08-27]. Provisioning
+  and payment are the founder's; `render.yaml` makes it one Blueprint apply.
 - Founder directive [DECIDED 2026-08-26]: operate as an "intelligence business
   developer" — continuously align the build toward customer outcomes using
   research and evidence; aim for YC-grade product quality; product surfaces
